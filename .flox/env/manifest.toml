@@ -1,0 +1,11 @@
+version = 1
+
+[include]
+environments = [
+  { remote = "flox/rust" },
+]
+
+[hook]
+on-activate = '''
+  export PATH="$PWD/target/debug:$PATH"
+'''
