@@ -5,6 +5,9 @@ pub enum AppError {
     #[error("TrueLayer API error: {0}")]
     TrueLayer(String),
 
+    #[error("Google Sheets API error: {0}")]
+    Sheets(String),
+
     #[error("OAuth2 authentication error: {0}")]
     Auth(String),
 
@@ -13,6 +16,9 @@ pub enum AppError {
 
     #[error("HTTP request failed: {0}")]
     Http(#[from] reqwest::Error),
+
+    #[error("Serialization error: {0}")]
+    Serialization(#[from] serde_json::Error),
 
     #[error("IO error: {0}")]
     Io(#[from] std::io::Error),

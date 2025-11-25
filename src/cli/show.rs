@@ -1,5 +1,6 @@
 use crate::config::Config;
 use crate::error::Result;
+use crate::sheets::SheetsClient;
 use crate::truelayer::{TrueLayerClient, TrueLayerOperations};
 use clap::Subcommand;
 use tracing::info;
@@ -9,6 +10,9 @@ pub enum ShowResource {
     /// Show available TrueLayer cards
     Cards,
 
+    /// Show the Google spreadsheet
+    Sheets,
+
     /// Show configuration and cache paths
     Paths,
 }
@@ -17,6 +21,7 @@ impl ShowResource {
     pub async fn execute(&self) -> Result<()> {
         match self {
             ShowResource::Cards => show_cards().await,
+            ShowResource::Sheets => show_sheets().await,
             ShowResource::Paths => show_paths(),
         }
     }
@@ -30,6 +35,15 @@ async fn show_cards() -> Result<()> {
     for card in cards {
         info!(id = card.id, provider = ?card.provider, "{}", card.name);
     }
+
+    Ok(())
+}
+
+async fn show_sheets() -> Result<()> {
+    let config = Config::load()?;
+    let sheets_client = SheetsClient::new(&config.google).await?;
+
+    info!(url = sheets_client.spreadsheet_url(), "Spreadsheet");
 
     Ok(())
 }

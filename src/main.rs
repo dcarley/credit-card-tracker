@@ -2,6 +2,7 @@ mod cli;
 mod config;
 mod error;
 mod models;
+mod sheets;
 mod truelayer;
 
 use clap::Parser;
