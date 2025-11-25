@@ -1,13 +1,15 @@
+mod auth;
 mod show;
 
 use crate::error::Result;
 use clap::{Parser, Subcommand};
 
+pub use auth::AuthProvider;
 pub use show::ShowResource;
 
 #[derive(Parser, Debug)]
 #[command(name = "credit-card-tracker")]
-#[command(about = "Sync credit card transactions from Truelayer to Google Sheets", long_about = None)]
+#[command(about = "Sync credit card transactions from TrueLayer to Google Sheets", long_about = None)]
 #[command(version)]
 pub struct Cli {
     /// Verbose mode (-v for info, -vv for debug)
@@ -21,6 +23,7 @@ pub struct Cli {
 impl Cli {
     pub async fn run(&self) -> Result<()> {
         match &self.command {
+            Commands::Auth { provider, reset } => provider.execute(*reset).await,
             Commands::Show { resource } => resource.execute().await,
         }
     }
@@ -28,6 +31,17 @@ impl Cli {
 
 #[derive(Subcommand, Debug)]
 pub enum Commands {
+    /// Authenticate with providers
+    Auth {
+        #[command(subcommand)]
+        provider: AuthProvider,
+
+        /// Clear cached tokens before authenticating
+        #[arg(short, long, global = true)]
+        reset: bool,
+    },
+
+    /// Show resources
     Show {
         #[command(subcommand)]
         resource: ShowResource,

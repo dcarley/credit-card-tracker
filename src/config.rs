@@ -17,6 +17,34 @@ pub struct TrueLayerConfig {
     pub client_secret: String,
 }
 
+impl TrueLayerConfig {
+    /// Detect if we're using the sandbox environment based on client_id prefix
+    fn is_sandbox(&self) -> bool {
+        self.client_id.starts_with("sandbox-")
+    }
+
+    pub fn auth_url(&self) -> String {
+        match self.is_sandbox() {
+            true => "https://auth.truelayer-sandbox.com".to_string(),
+            false => "https://auth.truelayer.com".to_string(),
+        }
+    }
+
+    pub fn api_base_url(&self) -> String {
+        match self.is_sandbox() {
+            true => "https://api.truelayer-sandbox.com".to_string(),
+            false => "https://api.truelayer.com".to_string(),
+        }
+    }
+
+    pub fn providers(&self) -> String {
+        match self.is_sandbox() {
+            true => "uk-cs-mock uk-ob-all uk-oauth-all".to_string(),
+            false => "uk-ob-all uk-oauth-all".to_string(),
+        }
+    }
+}
+
 #[derive(Debug, Serialize, Deserialize, Clone, Default)]
 pub struct GoogleConfig {
     pub client_id: String,
@@ -102,5 +130,29 @@ mod tests {
 
         assert_eq!(config.truelayer.client_id, deserialized.truelayer.client_id);
         assert_eq!(config.google.client_id, deserialized.google.client_id);
+    }
+
+    #[test]
+    fn test_environment_sandbox() {
+        let config = TrueLayerConfig {
+            client_id: "sandbox-abc123".to_string(),
+            client_secret: "secret".to_string(),
+        };
+        assert!(config.is_sandbox());
+        assert_eq!(config.auth_url(), "https://auth.truelayer-sandbox.com");
+        assert_eq!(config.api_base_url(), "https://api.truelayer-sandbox.com");
+        assert_eq!(config.providers(), "uk-cs-mock uk-ob-all uk-oauth-all");
+    }
+
+    #[test]
+    fn test_environment_live() {
+        let config = TrueLayerConfig {
+            client_id: "live-abc123".to_string(),
+            client_secret: "secret".to_string(),
+        };
+        assert!(!config.is_sandbox());
+        assert_eq!(config.auth_url(), "https://auth.truelayer.com");
+        assert_eq!(config.api_base_url(), "https://api.truelayer.com");
+        assert_eq!(config.providers(), "uk-ob-all uk-oauth-all");
     }
 }
