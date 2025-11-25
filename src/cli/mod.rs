@@ -1,5 +1,6 @@
 mod auth;
 mod show;
+mod sync;
 
 use crate::error::Result;
 use clap::{Parser, Subcommand};
@@ -24,6 +25,7 @@ impl Cli {
     pub async fn run(&self) -> Result<()> {
         match &self.command {
             Commands::Auth { provider, reset } => provider.execute(*reset).await,
+            Commands::Sync => sync::execute().await,
             Commands::Show { resource } => resource.execute().await,
         }
     }
@@ -40,6 +42,9 @@ pub enum Commands {
         #[arg(short, long, global = true)]
         reset: bool,
     },
+
+    /// Sync transactions from TrueLayer to Google Sheets
+    Sync,
 
     /// Show resources
     Show {

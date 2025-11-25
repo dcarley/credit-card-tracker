@@ -3,6 +3,7 @@ mod config;
 mod error;
 mod models;
 mod sheets;
+mod sync;
 mod truelayer;
 
 use clap::Parser;

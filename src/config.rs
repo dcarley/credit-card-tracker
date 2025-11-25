@@ -9,6 +9,8 @@ const CONFIG_DIR_PREFIX: &str = "credit-card-tracker";
 pub struct Config {
     pub truelayer: TrueLayerConfig,
     pub google: GoogleConfig,
+    #[serde(default)]
+    pub sync: SyncConfig,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, Default)]
@@ -49,6 +51,17 @@ impl TrueLayerConfig {
 pub struct GoogleConfig {
     pub client_id: String,
     pub client_secret: String,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct SyncConfig {
+    pub fetch_days: u32,
+}
+
+impl Default for SyncConfig {
+    fn default() -> Self {
+        Self { fetch_days: 60 }
+    }
 }
 
 impl Config {
@@ -123,6 +136,7 @@ mod tests {
                 client_id: "test_client_id".to_string(),
                 client_secret: "test_client_secret".to_string(),
             },
+            sync: SyncConfig::default(),
         };
 
         let serialized = toml::to_string(&config).unwrap();

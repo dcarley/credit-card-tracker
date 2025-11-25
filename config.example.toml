@@ -5,3 +5,6 @@ client_secret = "TODO"
 [google]
 client_id = "TODO"
 client_secret = "TODO"
+
+[sync]
+fetch_days = 60

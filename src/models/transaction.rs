@@ -285,7 +285,7 @@ mod tests {
                 "100.00".to_string(),
                 "GBP".to_string(),
                 "Credit".to_string(),
-                "tx_456".to_string(),
+                "tx_123".to_string(),
             ],
         ];
 
@@ -296,7 +296,7 @@ mod tests {
             currency: "GBP".to_string(),
             amount: dec!(100.00),
             type_: TransactionType::Credit,
-            id: "tx_456".to_string(),
+            id: "tx_123".to_string(),
         }];
         assert_eq!(transactions, expected);
     }
