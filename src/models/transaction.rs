@@ -17,6 +17,8 @@ pub struct Transaction {
     pub type_: TransactionType,
     #[serde(rename = "ID")]
     pub id: String,
+    #[serde(rename = "Matched ID", default)]
+    pub matched_id: Option<String>,
 }
 
 impl From<TrueLayerTransaction> for Transaction {
@@ -28,6 +30,7 @@ impl From<TrueLayerTransaction> for Transaction {
             currency: tl.currency,
             type_: tl.transaction_type.into(),
             id: tl.normalised_provider_transaction_id,
+            matched_id: None,
         }
     }
 }
@@ -89,6 +92,7 @@ impl ToSheetRows for [Transaction] {
                 amount: dec!(0),
                 type_: TransactionType::Debit,
                 id: String::new(),
+                matched_id: None,
             };
             writer
                 .serialize(&dummy)
@@ -171,6 +175,7 @@ pub(crate) mod test_helpers {
             amount,
             type_,
             id: id.to_string(),
+            matched_id: None,
         }
     }
 }
@@ -198,6 +203,7 @@ mod tests {
                 "Currency",
                 "Type",
                 "ID",
+                "Matched ID",
             ],
             vec![
                 "2024-11-23T10:00:00Z",
@@ -206,6 +212,7 @@ mod tests {
                 "GBP",
                 "Debit",
                 "tx_123",
+                "",
             ],
         ];
         assert_eq!(rows, expected);
@@ -222,6 +229,7 @@ mod tests {
             "Currency",
             "Type",
             "ID",
+            "Matched ID",
         ]];
         assert_eq!(rows, expected);
     }
@@ -236,6 +244,7 @@ mod tests {
                 "Currency".to_string(),
                 "Type".to_string(),
                 "ID".to_string(),
+                "Matched ID".to_string(),
             ],
             vec![
                 "2024-11-23T10:00:00Z".to_string(),
@@ -244,6 +253,7 @@ mod tests {
                 "GBP".to_string(),
                 "Debit".to_string(),
                 "tx_123".to_string(),
+                "".to_string(),
             ],
         ];
 
@@ -278,6 +288,7 @@ mod tests {
                 "Currency".to_string(),
                 "Type".to_string(),
                 "ID".to_string(),
+                "Matched ID".to_string(),
             ],
             vec![
                 "2024-11-23T10:00:00Z".to_string(),
@@ -286,6 +297,7 @@ mod tests {
                 "GBP".to_string(),
                 "Credit".to_string(),
                 "tx_123".to_string(),
+                "tx_456".to_string(),
             ],
         ];
 
@@ -297,6 +309,7 @@ mod tests {
             amount: dec!(100.00),
             type_: TransactionType::Credit,
             id: "tx_123".to_string(),
+            matched_id: Some("tx_456".to_string()),
         }];
         assert_eq!(transactions, expected);
     }
@@ -310,6 +323,7 @@ mod tests {
             "Currency".to_string(),
             "Type".to_string(),
             "ID".to_string(),
+            "Matched ID".to_string(),
         ]];
 
         let transactions = Transaction::from_sheet_rows(&rows).unwrap();

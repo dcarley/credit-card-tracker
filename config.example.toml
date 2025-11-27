@@ -8,3 +8,4 @@ client_secret = "TODO"
 
 [sync]
 fetch_days = 60
+reconcile_days = 60

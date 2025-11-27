@@ -56,11 +56,15 @@ pub struct GoogleConfig {
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct SyncConfig {
     pub fetch_days: u32,
+    pub reconcile_days: u32,
 }
 
 impl Default for SyncConfig {
     fn default() -> Self {
-        Self { fetch_days: 60 }
+        Self {
+            fetch_days: 60,
+            reconcile_days: 60,
+        }
     }
 }
 

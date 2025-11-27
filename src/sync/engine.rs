@@ -3,10 +3,11 @@ use crate::error::Result;
 use crate::models::Card;
 use crate::models::Transaction;
 use crate::sheets::SheetOperations;
+use crate::sync::reconcile::reconcile_transactions;
 use crate::truelayer::TrueLayerOperations;
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, Duration, Utc};
 use indicatif::ProgressStyle;
-use tracing::{Span, info, instrument};
+use tracing::{Span, debug, info, instrument};
 use tracing_indicatif::span_ext::IndicatifSpanExt;
 
 pub struct SyncEngine<TLC, SC> {
@@ -81,6 +82,7 @@ where
         self.sheets_client.ensure_sheet(sheet_name).await?;
 
         let existing_transactions = self.sheets_client.read_sheet(sheet_name).await?;
+        let existing_transactions_count = existing_transactions.len();
 
         let mut transaction_map: std::collections::HashMap<String, Transaction> =
             existing_transactions
@@ -88,7 +90,12 @@ where
                 .map(|t| (t.id.clone(), t))
                 .collect();
 
-        for t in transactions {
+        for mut t in transactions {
+            // If this transaction already exists in the sheet, preserve its matched_id
+            if let Some(existing) = transaction_map.get(&t.id) {
+                t.matched_id = existing.matched_id.clone();
+            }
+
             // Upsert: Overwrite existing entry (to get latest data) or insert new one
             transaction_map.insert(t.id.clone(), t);
         }
@@ -96,11 +103,31 @@ where
         let mut all_transactions: Vec<Transaction> = transaction_map.into_values().collect();
         all_transactions.sort_by_key(|t| t.timestamp);
 
+        let matches = reconcile_transactions(&all_transactions, self.config.reconcile_days);
+        for pair in &matches {
+            debug!(?pair, "Matched transaction pair");
+            all_transactions
+                .iter_mut()
+                .find(|t| t.id == pair.debit_id)
+                .expect("debit_id from reconcile must exist in all_transactions")
+                .matched_id = Some(pair.credit_id.clone());
+            all_transactions
+                .iter_mut()
+                .find(|t| t.id == pair.credit_id)
+                .expect("credit_id from reconcile must exist in all_transactions")
+                .matched_id = Some(pair.debit_id.clone());
+        }
+
         self.sheets_client
             .write_sheet(sheet_name, &all_transactions)
             .await?;
 
-        info!("Card synced");
+        info!(
+            total = all_transactions.len(),
+            new = all_transactions.len() - existing_transactions_count,
+            matches = matches.len(),
+            "Card synced"
+        );
 
         Ok(())
     }
@@ -193,7 +220,7 @@ mod tests {
     use rust_decimal::prelude::dec;
 
     #[tokio::test]
-    async fn test_sync_updates_transactions() {
+    async fn test_sync_updates_unmatched_transactions() {
         let base_datetime = mock_datetime(2025, 1, 1);
 
         let tx_sheet = mock_transaction(
@@ -219,12 +246,12 @@ mod tests {
         assert_eq!(
             *final_transactions,
             vec![tx_truelayer],
-            "transactions should be updated with latest data from TrueLayer"
+            "transactions that don't have matches should be updated with latest data from TrueLayer"
         );
     }
 
     #[tokio::test]
-    async fn test_sync_keeps_historical_data() {
+    async fn test_sync_keeps_and_matches_historical_data() {
         let base_datetime = mock_datetime(2025, 1, 1);
 
         let tx_sheet = mock_transaction(
@@ -250,10 +277,56 @@ mod tests {
 
         let final_transactions = mock_sheets_client.replaced_transactions.lock().unwrap();
 
+        let tx_sheet_matched = Transaction {
+            matched_id: Some(tx_truelayer.id.clone()),
+            ..tx_sheet.clone()
+        };
+        let tx_truelayer_matched = Transaction {
+            matched_id: Some(tx_sheet.id.clone()),
+            ..tx_truelayer.clone()
+        };
+
         assert_eq!(
             *final_transactions,
-            vec![tx_sheet, tx_truelayer],
-            "historical transactions outside sync window should be preserved"
+            vec![tx_sheet_matched, tx_truelayer_matched],
+            "historical transactions outside sync window should be preserved and matched with new transactions"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_sync_preserves_existing_matches() {
+        let base_datetime = mock_datetime(2025, 1, 1);
+
+        let tx_sheet = mock_transaction(
+            "tx_sheet",
+            dec!(-10.0),
+            TransactionType::Debit,
+            base_datetime - Duration::days(1),
+        );
+        let tx_truelayer = mock_transaction(
+            "tx_sheet_and_api",
+            dec!(10.0),
+            TransactionType::Credit,
+            base_datetime,
+        );
+        let tx_sheet_matched = Transaction {
+            matched_id: Some("manually matched".to_string()),
+            ..tx_sheet.clone()
+        };
+
+        let sheet_transactions = vec![tx_sheet_matched.clone()];
+        let truelayer_transactions = vec![tx_sheet, tx_truelayer.clone()];
+
+        let mock_sheets_client =
+            mocks::sync_against_mocks(sheet_transactions, truelayer_transactions)
+                .await
+                .unwrap();
+
+        let final_transactions = mock_sheets_client.replaced_transactions.lock().unwrap();
+        assert_eq!(
+            *final_transactions,
+            vec![tx_sheet_matched, tx_truelayer],
+            "existing matched_id values should be preserved during sync"
         );
     }
 }
