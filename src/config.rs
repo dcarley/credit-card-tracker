@@ -1,5 +1,6 @@
 use crate::error::{AppError, Result};
-use serde::{Deserialize, Serialize};
+use chrono::Duration;
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::fs;
 use std::path::PathBuf;
 
@@ -55,15 +56,17 @@ pub struct GoogleConfig {
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct SyncConfig {
-    pub fetch_days: u32,
-    pub reconcile_days: u32,
+    #[serde(with = "duration_days")]
+    pub fetch_days: Duration,
+    #[serde(with = "duration_days")]
+    pub reconcile_days: Duration,
 }
 
 impl Default for SyncConfig {
     fn default() -> Self {
         Self {
-            fetch_days: 60,
-            reconcile_days: 60,
+            fetch_days: Duration::days(60),
+            reconcile_days: Duration::days(60),
         }
     }
 }
@@ -125,6 +128,25 @@ impl Config {
     }
 }
 
+mod duration_days {
+    use super::*;
+
+    pub fn serialize<S>(source: &Duration, serializer: S) -> std::result::Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        source.num_days().serialize(serializer)
+    }
+
+    pub fn deserialize<'de, D>(deserializer: D) -> std::result::Result<Duration, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let days: i64 = Deserialize::deserialize(deserializer)?;
+        Ok(Duration::days(days))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -148,6 +170,29 @@ mod tests {
 
         assert_eq!(config.truelayer.client_id, deserialized.truelayer.client_id);
         assert_eq!(config.google.client_id, deserialized.google.client_id);
+    }
+
+    #[test]
+    fn test_sync_config_serialization() {
+        let sync_config = SyncConfig {
+            fetch_days: Duration::days(30),
+            reconcile_days: Duration::days(7),
+        };
+
+        #[derive(Serialize, Deserialize)]
+        struct Wrapper {
+            sync: SyncConfig,
+        }
+
+        let wrapper = Wrapper { sync: sync_config };
+        let serialized = toml::to_string(&wrapper).unwrap();
+
+        assert!(serialized.contains("fetch_days = 30"));
+        assert!(serialized.contains("reconcile_days = 7"));
+
+        let deserialized: Wrapper = toml::from_str(&serialized).unwrap();
+        assert_eq!(deserialized.sync.fetch_days.num_days(), 30);
+        assert_eq!(deserialized.sync.reconcile_days.num_days(), 7);
     }
 
     #[test]

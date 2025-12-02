@@ -5,7 +5,7 @@ use crate::models::Transaction;
 use crate::sheets::SheetOperations;
 use crate::sync::reconcile::reconcile_transactions;
 use crate::truelayer::TrueLayerOperations;
-use chrono::{DateTime, Duration, Utc};
+use chrono::{DateTime, Utc};
 use indicatif::ProgressStyle;
 use tracing::{Span, debug, info, instrument};
 use tracing_indicatif::span_ext::IndicatifSpanExt;
@@ -42,7 +42,7 @@ where
 
         // Normalize to start of day (00:00:00 UTC) to align with API daily resolution and avoid overlaps
         let to_date = Utc::now();
-        let from_date = (to_date - Duration::days(self.config.fetch_days as i64))
+        let from_date = (to_date - self.config.fetch_days)
             .date_naive()
             .and_hms_opt(0, 0, 0)
             .ok_or_else(|| {
@@ -217,6 +217,7 @@ mod tests {
     use super::*;
     use crate::models::transaction::TransactionType;
     use crate::models::transaction::test_helpers::{mock_datetime, mock_transaction};
+    use chrono::Duration;
     use rust_decimal::prelude::dec;
 
     #[tokio::test]

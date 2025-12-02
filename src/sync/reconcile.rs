@@ -1,4 +1,5 @@
 use crate::models::transaction::{Transaction, TransactionType};
+use chrono::Duration;
 use rust_decimal::Decimal;
 use std::collections::HashMap;
 use tracing::instrument;
@@ -13,7 +14,7 @@ pub struct MatchedPair {
 /// Reconciles transactions by matching Debits and Credits with identical amounts
 /// within a configurable time window.
 #[instrument(name = "Reconciling transactions", skip_all)]
-pub fn reconcile_transactions(transactions: &[Transaction], days: u32) -> Vec<MatchedPair> {
+pub fn reconcile_transactions(transactions: &[Transaction], window: Duration) -> Vec<MatchedPair> {
     // Identify candidates (unmatched)
     let candidates: Vec<&Transaction> = transactions
         .iter()
@@ -71,7 +72,7 @@ pub fn reconcile_transactions(transactions: &[Transaction], days: u32) -> Vec<Ma
 
                 // Check date window
                 let diff = tx_b.timestamp.signed_duration_since(tx_a.timestamp);
-                if diff.num_days().abs() <= days as i64 {
+                if diff.abs() <= window {
                     matched_indexes[i] = true;
                     matched_indexes[j] = true;
 
@@ -97,7 +98,7 @@ mod tests {
     use chrono::Duration;
     use rust_decimal::prelude::dec;
 
-    const TEST_RECONCILE_DAYS: u32 = 60;
+    const TEST_RECONCILE_DAYS: i64 = 60;
 
     #[test]
     fn test_reconcile_basic_match() {
@@ -115,7 +116,7 @@ mod tests {
         );
 
         let input = vec![tx_debit, tx_credit];
-        let matches = reconcile_transactions(&input, TEST_RECONCILE_DAYS);
+        let matches = reconcile_transactions(&input, Duration::days(TEST_RECONCILE_DAYS));
         let expected = vec![MatchedPair {
             debit_id: "tx_debit".to_string(),
             credit_id: "tx_credit".to_string(),
@@ -139,7 +140,7 @@ mod tests {
         );
 
         let input = vec![tx_credit, tx_debit];
-        let matches = reconcile_transactions(&input, TEST_RECONCILE_DAYS);
+        let matches = reconcile_transactions(&input, Duration::days(TEST_RECONCILE_DAYS));
         let expected = vec![MatchedPair {
             debit_id: "debit_id_1".to_string(),
             credit_id: "credit_id_1".to_string(),
@@ -169,7 +170,7 @@ mod tests {
         );
 
         let input = vec![tx_debit, tx_other, tx_credit];
-        let matches = reconcile_transactions(&input, TEST_RECONCILE_DAYS);
+        let matches = reconcile_transactions(&input, Duration::days(TEST_RECONCILE_DAYS));
         let expected = vec![MatchedPair {
             debit_id: "tx_debit".to_string(),
             credit_id: "tx3".to_string(),
@@ -194,7 +195,7 @@ mod tests {
         );
 
         let input = vec![tx_debit, tx_credit];
-        let matches = reconcile_transactions(&input, TEST_RECONCILE_DAYS);
+        let matches = reconcile_transactions(&input, Duration::days(TEST_RECONCILE_DAYS));
         assert_eq!(matches, vec![]);
     }
 
@@ -214,7 +215,7 @@ mod tests {
         );
 
         let input = vec![tx_debit, tx_credit];
-        let matches = reconcile_transactions(&input, TEST_RECONCILE_DAYS);
+        let matches = reconcile_transactions(&input, Duration::days(TEST_RECONCILE_DAYS));
         assert_eq!(matches, vec![]);
     }
 
@@ -234,7 +235,7 @@ mod tests {
         );
 
         let input = vec![tx_debit, tx_credit];
-        let matches = reconcile_transactions(&input, TEST_RECONCILE_DAYS);
+        let matches = reconcile_transactions(&input, Duration::days(TEST_RECONCILE_DAYS));
         assert_eq!(matches, vec![]);
     }
 
@@ -308,7 +309,7 @@ mod tests {
             tx3_credit,
         ];
 
-        let matches = reconcile_transactions(&input, TEST_RECONCILE_DAYS);
+        let matches = reconcile_transactions(&input, Duration::days(TEST_RECONCILE_DAYS));
         let expected = vec![
             MatchedPair {
                 debit_id: "tx1_debit".to_string(),
