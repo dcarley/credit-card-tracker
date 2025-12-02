@@ -10,6 +10,10 @@ pub use show::ShowResource;
 #[command(about = "Sync credit card transactions from Truelayer to Google Sheets", long_about = None)]
 #[command(version)]
 pub struct Cli {
+    /// Verbose mode (-v for info, -vv for debug)
+    #[arg(short, long, action = clap::ArgAction::Count, global = true)]
+    pub verbose: u8,
+
     #[command(subcommand)]
     pub command: Commands,
 }
