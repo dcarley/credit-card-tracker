@@ -18,6 +18,17 @@ jobs:
     - name: Configure environment trust
       run: flox config --set trusted_environments.flox/rust trust
 
+    - name: Cache Cargo registry and build artifacts
+      uses: actions/cache@v4
+      with:
+        path: |
+          ~/.cargo/registry
+          ~/.cargo/git
+          target
+        key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+        restore-keys: |
+          ${{ runner.os }}-cargo-
+
     - name: Test
       uses: flox/activate-action@v1
       with:
