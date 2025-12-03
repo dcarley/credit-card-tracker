@@ -2,8 +2,8 @@ use crate::config::TrueLayerConfig;
 use crate::error::{AppError, Result};
 use oauth2::{
     AuthUrl, AuthorizationCode, Client, ClientId, ClientSecret, CsrfToken, EndpointNotSet,
-    EndpointSet, PkceCodeChallenge, RedirectUrl, RefreshToken, Scope, StandardRevocableToken,
-    TokenResponse, TokenUrl,
+    EndpointSet, PkceCodeChallenge, PkceCodeVerifier, RedirectUrl, RefreshToken, Scope,
+    StandardRevocableToken, TokenResponse, TokenUrl,
     basic::{
         BasicClient, BasicErrorResponse, BasicRevocationErrorResponse,
         BasicTokenIntrospectionResponse, BasicTokenResponse,
@@ -116,10 +116,25 @@ impl TrueLayerAuth {
             .map_err(|e| AppError::Auth(format!("Failed to bind to {}: {}", bind_addr, e)))?;
 
         let (auth_url, csrf_token) = auth_request.url();
-        println!("Open this URL in your browser:\n{}", auth_url);
-        println!();
-        println!("Waiting for authorization...");
+        info!(
+            url = auth_url.to_string(),
+            "TrueLayer authentication required"
+        );
 
+        let token_result = self
+            .wait_for_auth_code_and_exchange(server, csrf_token, pkce_verifier)
+            .await?;
+
+        Self::parse_and_save_tokens(token_result, None)
+    }
+
+    #[instrument(name = "Waiting for user authentication", skip_all)]
+    async fn wait_for_auth_code_and_exchange(
+        &self,
+        server: Server,
+        csrf_token: CsrfToken,
+        pkce_verifier: PkceCodeVerifier,
+    ) -> Result<BasicTokenResponse> {
         let request = server
             .recv()
             .map_err(|e| AppError::Auth(format!("Failed to receive request: {}", e)))?;
@@ -152,15 +167,12 @@ impl TrueLayerAuth {
             .map_err(|e| AppError::Auth(format!("Failed to send response: {}", e)))?;
 
         // Exchange the code for an access token
-        let token_result = self
-            .client
+        self.client
             .exchange_code(code)
             .set_pkce_verifier(pkce_verifier)
             .request_async(&self.http_client)
             .await
-            .map_err(|e| AppError::Auth(format!("Failed to exchange code: {:?}", e)))?;
-
-        Self::parse_and_save_tokens(token_result, None)
+            .map_err(|e| AppError::Auth(format!("Failed to exchange code: {:?}", e)))
     }
 
     async fn refresh_access_token(&self, refresh_token: &str) -> Result<TrueLayerTokens> {
