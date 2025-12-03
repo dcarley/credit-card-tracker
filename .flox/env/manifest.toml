@@ -7,5 +7,15 @@ environments = [
 
 [hook]
 on-activate = '''
-  export PATH="$PWD/target/debug:$PATH"
+  export PATH="$PWD/result-credit-card-tracker/bin:$PATH"
 '''
+
+[build.credit-card-tracker]
+description = "Credit Card Tracker"
+version = "0.1.0"
+command = '''
+  mkdir -p $out/bin
+  cargo build --release
+  cp target/release/credit-card-tracker $out/bin/credit-card-tracker
+'''
+runtime-packages = ["libiconv"]

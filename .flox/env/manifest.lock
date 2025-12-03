@@ -64,7 +64,7 @@
       }
     },
     "hook": {
-      "on-activate": "  export PATH=\"$PWD/target/debug:$PATH\"\n"
+      "on-activate": "  export PATH=\"$PWD/result-credit-card-tracker/bin:$PATH\"\n"
     },
     "profile": {},
     "options": {
@@ -74,6 +74,16 @@
         "aarch64-linux",
         "x86_64-linux"
       ]
+    },
+    "build": {
+      "credit-card-tracker": {
+        "command": "  mkdir -p $out/bin\n  cargo build --release\n  cp target/release/credit-card-tracker $out/bin/credit-card-tracker\n",
+        "runtime-packages": [
+          "libiconv"
+        ],
+        "version": "0.1.0",
+        "description": "Credit Card Tracker"
+      }
     }
   },
   "packages": [
@@ -1285,9 +1295,19 @@
     "composer": {
       "version": 1,
       "hook": {
-        "on-activate": "  export PATH=\"$PWD/target/debug:$PATH\"\n"
+        "on-activate": "  export PATH=\"$PWD/result-credit-card-tracker/bin:$PATH\"\n"
       },
       "options": {},
+      "build": {
+        "credit-card-tracker": {
+          "command": "  mkdir -p $out/bin\n  cargo build --release\n  cp target/release/credit-card-tracker $out/bin/credit-card-tracker\n",
+          "runtime-packages": [
+            "libiconv"
+          ],
+          "version": "0.1.0",
+          "description": "Credit Card Tracker"
+        }
+      },
       "include": {
         "environments": [
           {
