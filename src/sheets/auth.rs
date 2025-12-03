@@ -1,14 +1,18 @@
 use crate::config::{Config, GoogleConfig};
 use crate::error::{AppError, Result};
 use crate::sheets::client::AUTH_SCOPE;
+use dialoguer::Input;
 use hyper_util::client::legacy::connect::HttpConnector;
 use std::fs;
+use std::future::Future;
 use std::path::PathBuf;
-use tracing::debug;
-use tracing::instrument;
+use std::pin::Pin;
+use tracing::{debug, info, instrument};
+use tracing_indicatif::suspend_tracing_indicatif;
 use yup_oauth2::{
     ApplicationSecret, InstalledFlowAuthenticator, InstalledFlowReturnMethod,
-    authenticator::Authenticator, hyper_rustls::HttpsConnector,
+    authenticator::Authenticator, authenticator_delegate::InstalledFlowDelegate,
+    hyper_rustls::HttpsConnector,
 };
 
 const GOOGLE_AUTH_URL: &str = "https://accounts.google.com/o/oauth2/auth";
@@ -59,11 +63,38 @@ async fn from_installed_flow(client_id: String, client_secret: String) -> Result
     // User will copy/paste the authorization code from the browser
     let auth = InstalledFlowAuthenticator::builder(secret, InstalledFlowReturnMethod::Interactive)
         .persist_tokens_to_disk(token_cache_path)
+        .flow_delegate(Box::new(IndicatifDelegate))
         .build()
         .await
         .map_err(|e| AppError::Auth(format!("Failed to build authenticator: {}", e)))?;
 
     Ok(auth)
+}
+
+struct IndicatifDelegate;
+
+impl InstalledFlowDelegate for IndicatifDelegate {
+    fn present_user_url<'a>(
+        &'a self,
+        url: &'a str,
+        need_code: bool,
+    ) -> Pin<Box<dyn Future<Output = std::result::Result<String, String>> + Send + 'a>> {
+        Box::pin(async move {
+            info!(url, "Google Sheets authentication required");
+            if !need_code {
+                return Ok(String::new());
+            }
+
+            let code = suspend_tracing_indicatif(|| {
+                Input::new()
+                    .with_prompt("Enter code")
+                    .interact_text()
+                    .unwrap_or_default()
+            });
+
+            Ok(code)
+        })
+    }
 }
 
 /// Clear cached Google tokens by deleting the token cache file
