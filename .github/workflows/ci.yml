@@ -1,0 +1,42 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test-and-build:
+    runs-on: ubuntu-24.04-arm
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    - name: Install flox
+      uses: flox/install-flox-action@v2.1.0
+
+    - name: Configure environment trust
+      run: flox config --set trusted_environments.flox/rust trust
+
+    - name: Test
+      uses: flox/activate-action@v1
+      with:
+        command: cargo test
+
+    - name: Lint clippy
+      uses: flox/activate-action@v1
+      with:
+        command: cargo clippy --all-targets --no-deps -- -D warnings
+
+    - name: Lint fmt
+      uses: flox/activate-action@v1
+      with:
+        command: cargo fmt --all --check
+
+    - name: Build
+      run: flox build
+
+    - name: Verify binary
+      uses: flox/activate-action@v1
+      with:
+        command: credit-card-tracker --help
