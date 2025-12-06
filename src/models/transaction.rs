@@ -6,6 +6,7 @@ use chrono::{DateTime, Utc};
 use rust_decimal::Decimal;
 use rust_decimal::prelude::dec;
 use serde::{Deserialize, Serialize};
+use serde_json::{Map, Value};
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "PascalCase")]
@@ -35,103 +36,114 @@ impl From<TrueLayerTransaction> for Transaction {
     }
 }
 
+impl Transaction {
+    /// Derive the CSV headers from the struct definition by serializing a dummy instance.
+    /// https://github.com/BurntSushi/rust-csv/issues/161
+    fn get_field_names() -> Vec<String> {
+        let mut writer = csv::WriterBuilder::new()
+            .has_headers(true)
+            .from_writer(Vec::new());
+
+        let dummy = Transaction {
+            timestamp: Utc::now(),
+            description: String::new(),
+            amount: dec!(0),
+            currency: String::new(),
+            type_: TransactionType::Debit,
+            id: String::new(),
+            matched_id: None,
+        };
+
+        // Serialize to write headers
+        // We unwrap because memory writing shouldn't fail for this struct
+        writer.serialize(&dummy).unwrap();
+
+        let data = String::from_utf8(writer.into_inner().unwrap_or_default()).unwrap_or_default();
+        let mut reader = csv::ReaderBuilder::new()
+            .has_headers(true)
+            .from_reader(data.as_bytes());
+
+        reader
+            .headers()
+            .map(|r| r.iter().map(|s| s.to_string()).collect())
+            .unwrap_or_default()
+    }
+
+    fn value_to_string(v: &Value) -> String {
+        match v {
+            Value::String(s) => s.clone(),
+            _ => v.to_string(),
+        }
+    }
+
+    fn normalize_sheet_value(v: &Value) -> Value {
+        match v {
+            Value::String(s) if s.is_empty() => Value::Null,
+            _ => v.clone(),
+        }
+    }
+}
+
 pub trait FromSheetRows: Sized {
     /// Convert a vector of rows (first row as headers) to a list of transactions.
-    fn from_sheet_rows(rows: &[Vec<String>]) -> crate::error::Result<Vec<Self>>;
+    fn from_sheet_rows(rows: &[Vec<Value>]) -> crate::error::Result<Vec<Self>>;
 }
 
 pub trait ToSheetRows {
-    /// Convert a list of transactions to a vector of rows (strings), always including headers.
-    fn to_sheet_rows(&self) -> crate::error::Result<Vec<Vec<String>>>;
+    /// Convert a list of transactions to a vector of rows (values), always including headers.
+    fn to_sheet_rows(&self) -> crate::error::Result<Vec<Vec<Value>>>;
 }
 
 impl FromSheetRows for Transaction {
-    fn from_sheet_rows(rows: &[Vec<String>]) -> crate::error::Result<Vec<Self>> {
+    fn from_sheet_rows(rows: &[Vec<Value>]) -> crate::error::Result<Vec<Self>> {
         if rows.is_empty() {
             return Ok(Vec::new());
         }
 
-        // Use the first row as headers for deserialization
-        let headers_row = &rows[0];
-        let headers = csv::StringRecord::from(headers_row.clone());
+        // Get headers from the first row
+        let headers: Vec<String> = rows[0].iter().map(Self::value_to_string).collect();
 
-        let mut transactions = Vec::new();
+        rows.iter()
+            .enumerate()
+            .skip(1)
+            .map(|(idx, row)| {
+                let map: Map<String, Value> = headers
+                    .iter()
+                    .zip(row.iter())
+                    .map(|(header, value)| (header.clone(), Self::normalize_sheet_value(value)))
+                    .collect();
 
-        for (idx, row) in rows.iter().enumerate().skip(1) {
-            // Pad row with empty strings if needed
-            let mut row_vec = row.clone();
-            while row_vec.len() < headers.len() {
-                row_vec.push(String::new());
-            }
-
-            let record = csv::StringRecord::from(row_vec);
-            let transaction: Transaction = record
-                .deserialize(Some(&headers))
-                .map_err(|e| AppError::Sheets(format!("Failed to parse row {}: {}", idx + 1, e)))?;
-
-            transactions.push(transaction);
-        }
-
-        Ok(transactions)
+                serde_json::from_value(Value::Object(map)).map_err(|e| {
+                    AppError::Sheets(format!("Failed to parse row {}: {}", idx + 1, e))
+                })
+            })
+            .collect()
     }
 }
 
 impl ToSheetRows for [Transaction] {
-    fn to_sheet_rows(&self) -> crate::error::Result<Vec<Vec<String>>> {
-        let mut writer = csv::WriterBuilder::new()
-            .has_headers(true)
-            .from_writer(vec![]);
+    fn to_sheet_rows(&self) -> crate::error::Result<Vec<Vec<Value>>> {
+        let headers = Transaction::get_field_names();
 
-        // Serialize all transactions, or a dummy if empty to get headers
-        // https://github.com/BurntSushi/rust-csv/issues/161
-        if self.is_empty() {
-            let dummy = Transaction {
-                timestamp: Utc::now(),
-                description: String::new(),
-                currency: String::new(),
-                amount: dec!(0),
-                type_: TransactionType::Debit,
-                id: String::new(),
-                matched_id: None,
-            };
-            writer
-                .serialize(&dummy)
-                .map_err(|e| AppError::Sheets(format!("Failed to serialize: {}", e)))?;
-        } else {
-            for t in self {
-                writer
-                    .serialize(t)
-                    .map_err(|e| AppError::Sheets(format!("Failed to serialize: {}", e)))?;
-            }
-        }
+        let header_row: Vec<Value> = headers.iter().map(|h| Value::String(h.clone())).collect();
 
-        let data = String::from_utf8(
-            writer
-                .into_inner()
-                .map_err(|e| AppError::Sheets(format!("Failed to get CSV data: {}", e)))?,
-        )
-        .map_err(|e| AppError::Sheets(format!("Invalid UTF-8: {}", e)))?;
+        let data_rows: Vec<Vec<Value>> = self
+            .iter()
+            .enumerate()
+            .map(|(idx, t)| {
+                let obj = serde_json::to_value(t).map_err(|e| {
+                    AppError::Sheets(format!("Failed to serialize row {}: {}", idx, e))
+                })?;
 
-        let mut reader = csv::ReaderBuilder::new()
-            .has_headers(true) // Separates headers from data
-            .from_reader(data.as_bytes());
+                Ok(headers
+                    .iter()
+                    .map(|header| obj.get(header).cloned().unwrap_or(Value::Null))
+                    .collect())
+            })
+            .collect::<crate::error::Result<_>>()?;
 
-        let mut rows = Vec::new();
-
-        // Add headers
-        let headers = reader
-            .headers()
-            .map_err(|e| AppError::Sheets(format!("Failed to read headers: {}", e)))?;
-        rows.push(headers.iter().map(|s| s.to_string()).collect());
-
-        // Add data rows only if we had real data
-        if !self.is_empty() {
-            for result in reader.records() {
-                let record = result
-                    .map_err(|e| AppError::Sheets(format!("Failed to read CSV record: {}", e)))?;
-                rows.push(record.iter().map(|s| s.to_string()).collect());
-            }
-        }
+        let mut rows = vec![header_row];
+        rows.extend(data_rows);
 
         Ok(rows)
     }
@@ -184,6 +196,7 @@ pub(crate) mod test_helpers {
 mod tests {
     use super::*;
     use rust_decimal::prelude::dec;
+    use serde_json::json;
 
     #[test]
     fn test_to_sheet_rows_with_data() {
@@ -197,22 +210,22 @@ mod tests {
         let rows = transactions.as_slice().to_sheet_rows().unwrap();
         let expected = vec![
             vec![
-                "Timestamp",
-                "Description",
-                "Amount",
-                "Currency",
-                "Type",
-                "ID",
-                "Matched ID",
+                json!("Timestamp"),
+                json!("Description"),
+                json!("Amount"),
+                json!("Currency"),
+                json!("Type"),
+                json!("ID"),
+                json!("Matched ID"),
             ],
             vec![
-                "2024-11-23T10:00:00Z",
-                "mock transaction: tx_123",
-                "-12.34",
-                "GBP",
-                "Debit",
-                "tx_123",
-                "",
+                json!("2024-11-23T10:00:00Z"),
+                json!("mock transaction: tx_123"),
+                json!("-12.34"), // rust_decimal serializes to string by default
+                json!("GBP"),
+                json!("Debit"),
+                json!("tx_123"),
+                Value::Null, // Option::None serializes to null
             ],
         ];
         assert_eq!(rows, expected);
@@ -223,13 +236,13 @@ mod tests {
         let transactions = vec![];
         let rows = transactions.as_slice().to_sheet_rows().unwrap();
         let expected = vec![vec![
-            "Timestamp",
-            "Description",
-            "Amount",
-            "Currency",
-            "Type",
-            "ID",
-            "Matched ID",
+            json!("Timestamp"),
+            json!("Description"),
+            json!("Amount"),
+            json!("Currency"),
+            json!("Type"),
+            json!("ID"),
+            json!("Matched ID"),
         ]];
         assert_eq!(rows, expected);
     }
@@ -238,22 +251,22 @@ mod tests {
     fn test_from_sheet_rows_with_data() {
         let rows = vec![
             vec![
-                "Timestamp".to_string(),
-                "Description".to_string(),
-                "Amount".to_string(),
-                "Currency".to_string(),
-                "Type".to_string(),
-                "ID".to_string(),
-                "Matched ID".to_string(),
+                json!("Timestamp"),
+                json!("Description"),
+                json!("Amount"),
+                json!("Currency"),
+                json!("Type"),
+                json!("ID"),
+                json!("Matched ID"),
             ],
             vec![
-                "2024-11-23T10:00:00Z".to_string(),
-                "mock transaction: tx_123".to_string(),
-                "-12.34".to_string(),
-                "GBP".to_string(),
-                "Debit".to_string(),
-                "tx_123".to_string(),
-                "".to_string(),
+                json!("2024-11-23T10:00:00Z"),
+                json!("mock transaction: tx_123"),
+                json!("-12.34"),
+                json!("GBP"),
+                json!("Debit"),
+                json!("tx_123"),
+                json!(""),
             ],
         ];
 
@@ -282,22 +295,22 @@ mod tests {
     fn test_from_sheet_rows_with_matched_id() {
         let rows = vec![
             vec![
-                "Timestamp".to_string(),
-                "Description".to_string(),
-                "Amount".to_string(),
-                "Currency".to_string(),
-                "Type".to_string(),
-                "ID".to_string(),
-                "Matched ID".to_string(),
+                json!("Timestamp"),
+                json!("Description"),
+                json!("Amount"),
+                json!("Currency"),
+                json!("Type"),
+                json!("ID"),
+                json!("Matched ID"),
             ],
             vec![
-                "2024-11-23T10:00:00Z".to_string(),
-                "Test transaction".to_string(),
-                "100.00".to_string(),
-                "GBP".to_string(),
-                "Credit".to_string(),
-                "tx_123".to_string(),
-                "tx_456".to_string(),
+                json!("2024-11-23T10:00:00Z"),
+                json!("Test transaction"),
+                json!("100.00"),
+                json!("GBP"),
+                json!("Credit"),
+                json!("tx_123"),
+                json!("tx_456"),
             ],
         ];
 
@@ -317,13 +330,13 @@ mod tests {
     #[test]
     fn test_from_sheet_rows_headers_only() {
         let rows = vec![vec![
-            "Timestamp".to_string(),
-            "Description".to_string(),
-            "Amount".to_string(),
-            "Currency".to_string(),
-            "Type".to_string(),
-            "ID".to_string(),
-            "Matched ID".to_string(),
+            json!("Timestamp"),
+            json!("Description"),
+            json!("Amount"),
+            json!("Currency"),
+            json!("Type"),
+            json!("ID"),
+            json!("Matched ID"),
         ]];
 
         let transactions = Transaction::from_sheet_rows(&rows).unwrap();

@@ -2,29 +2,27 @@ use super::SheetOperations;
 use crate::config::GoogleConfig;
 use crate::error::{AppError, Result};
 use crate::models::{FromSheetRows, ToSheetRows, Transaction};
-use crate::sheets::auth::{GOOGLE_REDIRECT_URI, create_and_verify_authenticator};
+use crate::sheets::auth::create_and_verify_authenticator;
 use async_trait::async_trait;
-use google_drive::Client as DriveApiClient;
-use serde_json::json;
-use sheets::Client as SheetsApiClient;
-use sheets::types::{
-    BatchUpdateSpreadsheetRequest, ClearValuesRequest, DateTimeRenderOption, Dimension, SheetType,
-    Spreadsheet, SpreadsheetProperties, ValueInputOption, ValueRange, ValueRenderOption,
+use google_drive3::api::DriveHub;
+use google_sheets4::api::Sheets;
+use google_sheets4::api::{
+    AddSheetRequest, BatchUpdateSpreadsheetRequest, ClearValuesRequest, Request, Scope,
+    SheetProperties, Spreadsheet, SpreadsheetProperties, ValueRange,
 };
-
+use hyper_rustls::HttpsConnector;
+use hyper_util::client::legacy::Client;
+use hyper_util::client::legacy::connect::HttpConnector;
 use tracing::{debug, instrument};
 
 // Access to files created or opened by the app
-pub(crate) const AUTH_SCOPE: &str = "https://www.googleapis.com/auth/drive.file";
-
-// Our auth method doesn't provide refresh tokens.
-const EMPTY_REFRESH_TOKEN: &str = "";
+pub(crate) const AUTH_SCOPE: Scope = Scope::DriveFile;
 
 // Name of the spreadsheet file in Google Drive.
 const SPREADSHEET_NAME: &str = "Credit Card Transactions (credit-card-tracker)";
 
 pub struct SheetsClient {
-    client: SheetsApiClient,
+    hub: Sheets<HttpsConnector<HttpConnector>>,
     spreadsheet_id: String,
     spreadsheet_url: String,
 }
@@ -35,37 +33,23 @@ impl SheetsClient {
     pub async fn new(config: &GoogleConfig) -> Result<Self> {
         let auth = create_and_verify_authenticator(config).await?;
 
-        // Get the token
-        let token = auth
-            .token(&[AUTH_SCOPE])
-            .await
-            .map_err(|e| AppError::Auth(format!("Failed to get token: {}", e)))?;
+        let connector = hyper_rustls::HttpsConnectorBuilder::new()
+            .with_native_roots()
+            .unwrap()
+            .https_or_http()
+            .enable_http1()
+            .build();
 
-        let token_str = token
-            .token()
-            .ok_or_else(|| AppError::Auth("No token value".to_string()))?;
+        let client = Client::builder(hyper_util::rt::TokioExecutor::new()).build(connector);
 
-        // Create clients
-        let client = SheetsApiClient::new(
-            &config.client_id,
-            &config.client_secret,
-            GOOGLE_REDIRECT_URI,
-            token_str,
-            EMPTY_REFRESH_TOKEN,
-        );
-        let drive = DriveApiClient::new(
-            &config.client_id,
-            &config.client_secret,
-            GOOGLE_REDIRECT_URI,
-            token_str,
-            EMPTY_REFRESH_TOKEN,
-        );
+        let sheets_hub = Sheets::new(client.clone(), auth.clone());
+        let drive_hub = DriveHub::new(client, auth);
 
         let (spreadsheet_id, spreadsheet_url) =
-            Self::get_or_create_spreadsheet(&client, &drive).await?;
+            Self::get_or_create_spreadsheet(&sheets_hub, &drive_hub).await?;
 
         Ok(Self {
-            client,
+            hub: sheets_hub,
             spreadsheet_id,
             spreadsheet_url,
         })
@@ -76,8 +60,8 @@ impl SheetsClient {
     }
 
     async fn get_or_create_spreadsheet(
-        sheets: &SheetsApiClient,
-        drive: &DriveApiClient,
+        sheets: &Sheets<HttpsConnector<HttpConnector>>,
+        drive: &DriveHub<HttpsConnector<HttpConnector>>,
     ) -> Result<(String, String)> {
         if let Some(id) = Self::search_spreadsheet_by_name(drive, SPREADSHEET_NAME).await? {
             let url = format!("https://docs.google.com/spreadsheets/d/{}", id);
@@ -89,7 +73,7 @@ impl SheetsClient {
 
     #[instrument(name = "Finding existing spreadsheet", skip(drive))]
     async fn search_spreadsheet_by_name(
-        drive: &DriveApiClient,
+        drive: &DriveHub<HttpsConnector<HttpConnector>>,
         name: &str,
     ) -> Result<Option<String>> {
         let query = format!(
@@ -97,101 +81,74 @@ impl SheetsClient {
             name
         );
 
-        let result = drive
+        let (_, file_list) = drive
             .files()
-            .list(
-                "",     // corpora
-                "",     // drive_id
-                false,  // include_items_from_all_drives
-                "",     // include_labels
-                false,  // include_permissions_for_view
-                "",     // order_by
-                1,      // page_size
-                "",     // page_token
-                &query, // q
-                "",     // spaces
-                false,  // supports_all_drives
-                false,  // supports_team_drives
-                "",     // team_drive_id
-            )
+            .list()
+            .q(&query)
+            .spaces("drive")
+            .page_size(1)
+            .add_scope(AUTH_SCOPE)
+            .doit()
             .await
             .map_err(|e| AppError::Sheets(format!("Failed to search spreadsheet: {}", e)))?;
 
-        // TODO: error when multiple found?
-        let spreadsheet_id = result.body.first().map(|file| file.id.clone());
+        let spreadsheet_id = file_list
+            .files
+            .and_then(|files| files.into_iter().next())
+            .map(|file| file.id.unwrap_or_default());
 
         Ok(spreadsheet_id)
     }
 
     #[instrument(name = "Creating new spreadsheet", skip(sheets))]
     async fn create_new_spreadsheet(
-        sheets: &SheetsApiClient,
+        sheets: &Sheets<HttpsConnector<HttpConnector>>,
         name: &str,
     ) -> Result<(String, String)> {
-        let props = SpreadsheetProperties {
-            auto_recalc: None,
-            default_format: None,
-            iterative_calculation_settings: None,
-            locale: "en_US".to_string(),
-            spreadsheet_theme: None,
-            time_zone: "UTC".to_string(),
-            title: name.to_string(),
-        };
-
         let spreadsheet = Spreadsheet {
-            data_source_schedules: vec![],
-            data_sources: vec![],
-            // TODO: set?
-            developer_metadata: vec![],
-            named_ranges: vec![],
-            properties: Some(props),
-            sheets: vec![],
-            spreadsheet_id: String::new(),
-            spreadsheet_url: String::new(),
+            properties: Some(SpreadsheetProperties {
+                title: Some(name.to_string()),
+                time_zone: Some("UTC".to_string()),
+                ..Default::default()
+            }),
+            ..Default::default()
         };
 
-        let result = sheets
+        let (_, result) = sheets
             .spreadsheets()
-            .create(&spreadsheet)
+            .create(spreadsheet)
+            .add_scope(AUTH_SCOPE)
+            .doit()
             .await
             .map_err(|e| AppError::Sheets(format!("Failed to create spreadsheet: {}", e)))?;
 
-        let spreadsheet_id = if result.body.spreadsheet_id.is_empty() {
-            return Err(AppError::Sheets(
-                "Created spreadsheet has empty ID".to_string(),
-            ));
-        } else {
-            result.body.spreadsheet_id.clone()
-        };
+        let spreadsheet_id = result
+            .spreadsheet_id
+            .ok_or_else(|| AppError::Sheets("Created spreadsheet has empty ID".to_string()))?;
 
-        let spreadsheet_url = if result.body.spreadsheet_url.is_empty() {
-            return Err(AppError::Sheets(
-                "Created spreadsheet has empty URL".to_string(),
-            ));
-        } else {
-            result.body.spreadsheet_url.clone()
-        };
+        let spreadsheet_url = result
+            .spreadsheet_url
+            .ok_or_else(|| AppError::Sheets("Created spreadsheet has empty URL".to_string()))?;
 
         Ok((spreadsheet_id, spreadsheet_url))
     }
 
     async fn sheet_exists(&self, sheet_name: &str) -> Result<bool> {
-        let result = self
-            .client
+        let (_, spreadsheet) = self
+            .hub
             .spreadsheets()
-            .get(
-                &self.spreadsheet_id,
-                false, // include_grid_data
-                &[],   // ranges
-            )
+            .get(&self.spreadsheet_id)
+            .include_grid_data(false)
+            .add_scope(AUTH_SCOPE)
+            .doit()
             .await
             .map_err(|e| AppError::Sheets(format!("Failed to get spreadsheet: {}", e)))?;
 
-        let exists = result.body.sheets.iter().any(|sheet| {
+        let exists = spreadsheet.sheets.unwrap_or_default().iter().any(|sheet| {
             sheet
                 .properties
                 .as_ref()
-                .map(|props| props.title == sheet_name)
+                .map(|props| props.title.as_deref() == Some(sheet_name))
                 .unwrap_or(false)
         });
 
@@ -199,41 +156,29 @@ impl SheetsClient {
     }
 
     async fn create_sheet(&self, sheet_name: &str) -> Result<()> {
-        use sheets::types::{AddSheetRequest, Request, SheetProperties};
-
-        let add_sheet_request = AddSheetRequest {
-            properties: Some(SheetProperties {
-                title: sheet_name.to_string(),
-                sheet_id: 0,
-                index: 0,
-                sheet_type: Some(SheetType::Grid),
-                grid_properties: None,
-                hidden: false,
-                tab_color: None,
-                right_to_left: false,
-                data_source_sheet_properties: None,
-                tab_color_style: None,
+        let request = Request {
+            add_sheet: Some(AddSheetRequest {
+                properties: Some(SheetProperties {
+                    title: Some(sheet_name.to_string()),
+                    sheet_type: Some("GRID".to_string()),
+                    ..Default::default()
+                }),
             }),
+            ..Default::default()
         };
-
-        // Use serde_json to create Request
-        let request_json = json!({
-            "addSheet": add_sheet_request
-        });
-
-        let request: Request = serde_json::from_value(request_json)
-            .map_err(|e| AppError::Sheets(format!("Failed to build request: {}", e)))?;
 
         let batch_update = BatchUpdateSpreadsheetRequest {
-            requests: vec![request],
+            requests: Some(vec![request]),
             include_spreadsheet_in_response: Some(false),
-            response_ranges: vec![],
             response_include_grid_data: Some(false),
+            ..Default::default()
         };
 
-        self.client
+        self.hub
             .spreadsheets()
-            .batch_update(&self.spreadsheet_id, &batch_update)
+            .batch_update(batch_update, &self.spreadsheet_id)
+            .add_scope(AUTH_SCOPE)
+            .doit()
             .await
             .map_err(|e| AppError::Sheets(format!("Failed to create sheet: {}", e)))?;
 
@@ -257,33 +202,36 @@ impl SheetOperations for SheetsClient {
     #[instrument(name = "Fetching sheet", skip(self))]
     async fn read_sheet(&self, sheet_name: &str) -> Result<Vec<Transaction>> {
         let range = format!("{}!A:G", sheet_name);
-        let response = self
-            .client
+        let (_, response) = self
+            .hub
             .spreadsheets()
-            .values_get(
-                &self.spreadsheet_id,
-                &range,
-                DateTimeRenderOption::FormattedString,
-                Dimension::Rows,
-                ValueRenderOption::UnformattedValue,
-            )
+            .values_get(&self.spreadsheet_id, &range)
+            .date_time_render_option("FORMATTED_STRING")
+            .major_dimension("ROWS")
+            .value_render_option("UNFORMATTED_VALUE")
+            .add_scope(AUTH_SCOPE)
+            .doit()
             .await
             .map_err(|e| {
                 AppError::Sheets(format!("Failed to read sheet '{}': {}", sheet_name, e))
             })?;
 
-        Transaction::from_sheet_rows(&response.body.values)
+        // Values are Option<Vec<Vec<serde_json::Value>>>
+        let values = response.values.unwrap_or_default();
+        Transaction::from_sheet_rows(&values)
     }
 
     #[instrument(name = "Writing sheet", skip(self, transactions))]
     async fn write_sheet(&self, sheet_name: &str, transactions: &[Transaction]) -> Result<()> {
         // Clear the entire sheet first
         let range_to_clear = format!("{}!A:Z", sheet_name);
-        let clear_request = ClearValuesRequest {};
+        let clear_request = ClearValuesRequest::default();
 
-        self.client
+        self.hub
             .spreadsheets()
-            .values_clear(&self.spreadsheet_id, &range_to_clear, &clear_request)
+            .values_clear(clear_request, &self.spreadsheet_id, &range_to_clear)
+            .add_scope(AUTH_SCOPE)
+            .doit()
             .await
             .map_err(|e| AppError::Sheets(format!("Failed to clear sheet: {}", e)))?;
 
@@ -291,22 +239,17 @@ impl SheetOperations for SheetsClient {
 
         let data_range = format!("{}!A1", sheet_name);
         let value_range = ValueRange {
-            major_dimension: Some(Dimension::Rows),
-            range: data_range.clone(),
-            values: rows,
+            major_dimension: Some("ROWS".to_string()),
+            range: Some(data_range.clone()),
+            values: Some(rows),
         };
 
-        self.client
+        self.hub
             .spreadsheets()
-            .values_update(
-                &self.spreadsheet_id,
-                &data_range,
-                false,
-                DateTimeRenderOption::FormattedString,
-                ValueRenderOption::FormattedValue,
-                ValueInputOption::Raw,
-                &value_range,
-            )
+            .values_update(value_range, &self.spreadsheet_id, &data_range)
+            .value_input_option("RAW")
+            .add_scope(AUTH_SCOPE)
+            .doit()
             .await
             .map_err(|e| AppError::Sheets(format!("Failed to write transactions: {}", e)))?;
 

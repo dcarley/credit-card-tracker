@@ -2,6 +2,7 @@ use crate::config::{Config, GoogleConfig};
 use crate::error::{AppError, Result};
 use crate::sheets::client::AUTH_SCOPE;
 use dialoguer::Input;
+use hyper_rustls::HttpsConnector;
 use hyper_util::client::legacy::connect::HttpConnector;
 use std::fs;
 use std::future::Future;
@@ -12,7 +13,6 @@ use tracing_indicatif::suspend_tracing_indicatif;
 use yup_oauth2::{
     ApplicationSecret, InstalledFlowAuthenticator, InstalledFlowReturnMethod,
     authenticator::Authenticator, authenticator_delegate::InstalledFlowDelegate,
-    hyper_rustls::HttpsConnector,
 };
 
 const GOOGLE_AUTH_URL: &str = "https://accounts.google.com/o/oauth2/auth";
@@ -20,7 +20,7 @@ const GOOGLE_TOKEN_URL: &str = "https://oauth2.googleapis.com/token";
 const GOOGLE_CERT_URL: &str = "https://www.googleapis.com/oauth2/v1/certs";
 pub(crate) const GOOGLE_REDIRECT_URI: &str = "urn:ietf:wg:oauth:2.0:oob";
 
-type AuthType = Authenticator<HttpsConnector<HttpConnector>>;
+pub type AuthType = Authenticator<HttpsConnector<HttpConnector>>;
 
 /// Create and verify authenticator by fetching a token
 pub(super) async fn create_and_verify_authenticator(config: &GoogleConfig) -> Result<AuthType> {
