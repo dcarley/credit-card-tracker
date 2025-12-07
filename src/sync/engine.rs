@@ -79,7 +79,7 @@ where
             .await?;
 
         let sheet_name = &card.name;
-        self.sheets_client.ensure_sheet(sheet_name).await?;
+        let sheet_id = self.sheets_client.ensure_sheet(sheet_name).await?;
 
         let existing_transactions = self.sheets_client.read_sheet(sheet_name).await?;
         let existing_transactions_count = existing_transactions.len();
@@ -119,7 +119,7 @@ where
         }
 
         self.sheets_client
-            .write_sheet(sheet_name, &all_transactions)
+            .write_sheet(sheet_id, sheet_name, &all_transactions)
             .await?;
 
         info!(
@@ -196,15 +196,20 @@ mod mocks {
 
     #[async_trait]
     impl SheetOperations for MockSheetsClient {
-        async fn ensure_sheet(&self, _sheet_name: &str) -> Result<()> {
-            Ok(())
+        async fn ensure_sheet(&self, _sheet_name: &str) -> Result<i32> {
+            Ok(0)
         }
 
         async fn read_sheet(&self, _sheet_name: &str) -> Result<Vec<Transaction>> {
             Ok(self.sheet_transactions.lock().unwrap().clone())
         }
 
-        async fn write_sheet(&self, _sheet_name: &str, transactions: &[Transaction]) -> Result<()> {
+        async fn write_sheet(
+            &self,
+            _sheet_id: i32,
+            _sheet_name: &str,
+            transactions: &[Transaction],
+        ) -> Result<()> {
             let mut replaced = self.replaced_transactions.lock().unwrap();
             *replaced = transactions.to_vec();
             Ok(())

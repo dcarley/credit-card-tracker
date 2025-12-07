@@ -5,10 +5,12 @@ use crate::models::{FromSheetRows, ToSheetRows, Transaction};
 use crate::sheets::auth::create_and_verify_authenticator;
 use async_trait::async_trait;
 use google_drive3::api::DriveHub;
+use google_sheets4::FieldMask;
 use google_sheets4::api::Sheets;
 use google_sheets4::api::{
-    AddSheetRequest, BatchUpdateSpreadsheetRequest, ClearValuesRequest, Request, Scope,
-    SheetProperties, Spreadsheet, SpreadsheetProperties, ValueRange,
+    AddSheetRequest, BatchUpdateSpreadsheetRequest, CellData, CellFormat, ClearValuesRequest,
+    GridRange, RepeatCellRequest, Request, Scope, SheetProperties, Spreadsheet,
+    SpreadsheetProperties, TextFormat, ValueRange,
 };
 use hyper_rustls::HttpsConnector;
 use hyper_util::client::legacy::Client;
@@ -133,7 +135,7 @@ impl SheetsClient {
         Ok((spreadsheet_id, spreadsheet_url))
     }
 
-    async fn sheet_exists(&self, sheet_name: &str) -> Result<bool> {
+    async fn get_sheet_id(&self, sheet_name: &str) -> Result<Option<i32>> {
         let (_, spreadsheet) = self
             .hub
             .spreadsheets()
@@ -144,18 +146,24 @@ impl SheetsClient {
             .await
             .map_err(|e| AppError::Sheets(format!("Failed to get spreadsheet: {}", e)))?;
 
-        let exists = spreadsheet.sheets.unwrap_or_default().iter().any(|sheet| {
-            sheet
-                .properties
-                .as_ref()
-                .map(|props| props.title.as_deref() == Some(sheet_name))
-                .unwrap_or(false)
-        });
+        let sheet_id = spreadsheet
+            .sheets
+            .unwrap_or_default()
+            .iter()
+            .find(|sheet| {
+                sheet
+                    .properties
+                    .as_ref()
+                    .map(|props| props.title.as_deref() == Some(sheet_name))
+                    .unwrap_or(false)
+            })
+            .and_then(|sheet| sheet.properties.as_ref())
+            .and_then(|props| props.sheet_id);
 
-        Ok(exists)
+        Ok(sheet_id)
     }
 
-    async fn create_sheet(&self, sheet_name: &str) -> Result<()> {
+    async fn create_sheet(&self, sheet_name: &str) -> Result<i32> {
         let request = Request {
             add_sheet: Some(AddSheetRequest {
                 properties: Some(SheetProperties {
@@ -169,8 +177,60 @@ impl SheetsClient {
 
         let batch_update = BatchUpdateSpreadsheetRequest {
             requests: Some(vec![request]),
-            include_spreadsheet_in_response: Some(false),
+            include_spreadsheet_in_response: Some(true),
             response_include_grid_data: Some(false),
+            ..Default::default()
+        };
+
+        let (_, response) = self
+            .hub
+            .spreadsheets()
+            .batch_update(batch_update, &self.spreadsheet_id)
+            .add_scope(AUTH_SCOPE)
+            .doit()
+            .await
+            .map_err(|e| AppError::Sheets(format!("Failed to create sheet: {}", e)))?;
+
+        let sheet_id = response
+            .replies
+            .and_then(|replies| replies.into_iter().next())
+            .and_then(|reply| reply.add_sheet)
+            .and_then(|add_sheet| add_sheet.properties)
+            .and_then(|props| props.sheet_id)
+            .ok_or_else(|| {
+                AppError::Sheets("Failed to get sheet ID from create response".to_string())
+            })?;
+
+        Ok(sheet_id)
+    }
+
+    async fn apply_formatting(&self, sheet_id: i32) -> Result<()> {
+        let bold_header_row = Request {
+            repeat_cell: Some(RepeatCellRequest {
+                range: Some(GridRange {
+                    sheet_id: Some(sheet_id),
+                    start_row_index: Some(0),
+                    end_row_index: Some(1),
+                    start_column_index: None,
+                    end_column_index: None,
+                }),
+                cell: Some(CellData {
+                    user_entered_format: Some(CellFormat {
+                        text_format: Some(TextFormat {
+                            bold: Some(true),
+                            ..Default::default()
+                        }),
+                        ..Default::default()
+                    }),
+                    ..Default::default()
+                }),
+                fields: Some(FieldMask::new(&["userEnteredFormat.textFormat.bold"])),
+            }),
+            ..Default::default()
+        };
+
+        let batch_update = BatchUpdateSpreadsheetRequest {
+            requests: Some(vec![bold_header_row]),
             ..Default::default()
         };
 
@@ -180,7 +240,7 @@ impl SheetsClient {
             .add_scope(AUTH_SCOPE)
             .doit()
             .await
-            .map_err(|e| AppError::Sheets(format!("Failed to create sheet: {}", e)))?;
+            .map_err(|e| AppError::Sheets(format!("Failed to apply formatting: {}", e)))?;
 
         Ok(())
     }
@@ -189,14 +249,15 @@ impl SheetsClient {
 #[async_trait]
 impl SheetOperations for SheetsClient {
     #[instrument(name = "Ensuring sheet exists", skip(self))]
-    async fn ensure_sheet(&self, sheet_name: &str) -> Result<()> {
-        if self.sheet_exists(sheet_name).await? {
-            debug!("Sheet '{}' exists.", sheet_name);
+    async fn ensure_sheet(&self, sheet_name: &str) -> Result<i32> {
+        if let Some(sheet_id) = self.get_sheet_id(sheet_name).await? {
+            debug!(sheet_id, "Found existing sheet");
+            Ok(sheet_id)
         } else {
-            debug!("Sheet '{}' doesn't exist, creating it", sheet_name);
-            self.create_sheet(sheet_name).await?;
+            let sheet_id = self.create_sheet(sheet_name).await?;
+            debug!(sheet_id, "Created sheet");
+            Ok(sheet_id)
         }
-        Ok(())
     }
 
     #[instrument(name = "Fetching sheet", skip(self))]
@@ -222,7 +283,12 @@ impl SheetOperations for SheetsClient {
     }
 
     #[instrument(name = "Writing sheet", skip(self, transactions))]
-    async fn write_sheet(&self, sheet_name: &str, transactions: &[Transaction]) -> Result<()> {
+    async fn write_sheet(
+        &self,
+        sheet_id: i32,
+        sheet_name: &str,
+        transactions: &[Transaction],
+    ) -> Result<()> {
         // Clear the entire sheet first
         let range_to_clear = format!("{}!A:Z", sheet_name);
         let clear_request = ClearValuesRequest::default();
@@ -252,6 +318,9 @@ impl SheetOperations for SheetsClient {
             .doit()
             .await
             .map_err(|e| AppError::Sheets(format!("Failed to write transactions: {}", e)))?;
+
+        // Apply formatting
+        self.apply_formatting(sheet_id).await?;
 
         Ok(())
     }

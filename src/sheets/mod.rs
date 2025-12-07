@@ -12,9 +12,14 @@ use async_trait::async_trait;
 
 #[async_trait]
 pub trait SheetOperations {
-    async fn ensure_sheet(&self, sheet_name: &str) -> Result<()>;
+    async fn ensure_sheet(&self, sheet_name: &str) -> Result<i32>;
 
     async fn read_sheet(&self, sheet_name: &str) -> Result<Vec<Transaction>>;
 
-    async fn write_sheet(&self, sheet_name: &str, transactions: &[Transaction]) -> Result<()>;
+    async fn write_sheet(
+        &self,
+        sheet_id: i32,
+        sheet_name: &str,
+        transactions: &[Transaction],
+    ) -> Result<()>;
 }
