@@ -9,8 +9,8 @@ use google_sheets4::FieldMask;
 use google_sheets4::api::Sheets;
 use google_sheets4::api::{
     AddSheetRequest, BatchUpdateSpreadsheetRequest, CellData, CellFormat, ClearValuesRequest,
-    GridRange, RepeatCellRequest, Request, Scope, SheetProperties, Spreadsheet,
-    SpreadsheetProperties, TextFormat, ValueRange,
+    GridProperties, GridRange, RepeatCellRequest, Request, Scope, SheetProperties, Spreadsheet,
+    SpreadsheetProperties, TextFormat, UpdateSheetPropertiesRequest, ValueRange,
 };
 use hyper_rustls::HttpsConnector;
 use hyper_util::client::legacy::Client;
@@ -229,8 +229,23 @@ impl SheetsClient {
             ..Default::default()
         };
 
+        let freeze_header_row = Request {
+            update_sheet_properties: Some(UpdateSheetPropertiesRequest {
+                properties: Some(SheetProperties {
+                    sheet_id: Some(sheet_id),
+                    grid_properties: Some(GridProperties {
+                        frozen_row_count: Some(1),
+                        ..Default::default()
+                    }),
+                    ..Default::default()
+                }),
+                fields: Some(FieldMask::new(&["gridProperties.frozenRowCount"])),
+            }),
+            ..Default::default()
+        };
+
         let batch_update = BatchUpdateSpreadsheetRequest {
-            requests: Some(vec![bold_header_row]),
+            requests: Some(vec![bold_header_row, freeze_header_row]),
             ..Default::default()
         };
 
