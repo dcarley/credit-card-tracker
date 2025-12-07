@@ -6,10 +6,11 @@ use crate::sheets::auth::create_and_verify_authenticator;
 use async_trait::async_trait;
 use google_drive3::api::DriveHub;
 use google_sheets4::FieldMask;
-use google_sheets4::api::Sheets;
+use google_sheets4::api::{AddConditionalFormatRuleRequest, Sheets};
 use google_sheets4::api::{
-    AddSheetRequest, BatchUpdateSpreadsheetRequest, CellData, CellFormat, ClearValuesRequest,
-    GridProperties, GridRange, RepeatCellRequest, Request, Scope, SheetProperties, Spreadsheet,
+    AddSheetRequest, BatchUpdateSpreadsheetRequest, BooleanCondition, BooleanRule, CellData,
+    CellFormat, ClearValuesRequest, Color, ConditionValue, ConditionalFormatRule, GridProperties,
+    GridRange, RepeatCellRequest, Request, Scope, SheetProperties, Spreadsheet,
     SpreadsheetProperties, TextFormat, UpdateSheetPropertiesRequest, ValueRange,
 };
 use hyper_rustls::HttpsConnector;
@@ -244,8 +245,56 @@ impl SheetsClient {
             ..Default::default()
         };
 
+        let light_yellow = Color {
+            red: Some(0.988),
+            green: Some(0.910),
+            blue: Some(0.698),
+            alpha: Some(1.0),
+        };
+        let id_column = Transaction::get_column_letter("ID")
+            .ok_or_else(|| AppError::Sheets("ID column not found".to_string()))?;
+        let matched_id_column = Transaction::get_column_letter("Matched ID")
+            .ok_or_else(|| AppError::Sheets("Matched ID column not found".to_string()))?;
+
+        let highlight_unmatched_rows = Request {
+            add_conditional_format_rule: Some(AddConditionalFormatRuleRequest {
+                index: Some(0),
+                rule: Some(ConditionalFormatRule {
+                    ranges: Some(vec![GridRange {
+                        sheet_id: Some(sheet_id),
+                        start_row_index: Some(1), // Skip header row
+                        end_row_index: None,
+                        start_column_index: None,
+                        end_column_index: None,
+                    }]),
+                    boolean_rule: Some(BooleanRule {
+                        condition: Some(BooleanCondition {
+                            type_: Some("CUSTOM_FORMULA".to_string()),
+                            values: Some(vec![ConditionValue {
+                                user_entered_value: Some(format!(
+                                    "=AND(NOT(ISBLANK(${}2)), ISBLANK(${}2))",
+                                    id_column, matched_id_column,
+                                )),
+                                ..Default::default()
+                            }]),
+                        }),
+                        format: Some(CellFormat {
+                            background_color: Some(light_yellow),
+                            ..Default::default()
+                        }),
+                    }),
+                    ..Default::default()
+                }),
+            }),
+            ..Default::default()
+        };
+
         let batch_update = BatchUpdateSpreadsheetRequest {
-            requests: Some(vec![bold_header_row, freeze_header_row]),
+            requests: Some(vec![
+                bold_header_row,
+                freeze_header_row,
+                highlight_unmatched_rows,
+            ]),
             ..Default::default()
         };
 

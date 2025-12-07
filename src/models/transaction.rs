@@ -69,6 +69,30 @@ impl Transaction {
             .unwrap_or_default()
     }
 
+    /// Get the column index (0-based) for a specific field name.
+    pub fn get_column_index(field_name: &str) -> Option<usize> {
+        Self::get_field_names()
+            .iter()
+            .position(|name| name == field_name)
+    }
+
+    /// Get the column letter (A-based) for a specific field name.
+    pub fn get_column_letter(field_name: &str) -> Option<String> {
+        Self::get_column_index(field_name).map(Self::index_to_column_letter)
+    }
+
+    fn index_to_column_letter(col_idx: usize) -> String {
+        let remainder = col_idx % 26;
+        let char = (b'A' + remainder as u8) as char;
+
+        if col_idx < 26 {
+            return char.to_string();
+        }
+
+        let parent = (col_idx / 26) - 1;
+        format!("{}{}", Self::index_to_column_letter(parent), char)
+    }
+
     fn value_to_string(v: &Value) -> String {
         match v {
             Value::String(s) => s.clone(),
@@ -342,5 +366,30 @@ mod tests {
         let transactions = Transaction::from_sheet_rows(&rows).unwrap();
         let expected = vec![];
         assert_eq!(transactions, expected);
+    }
+
+    #[test]
+    fn test_get_column_letter() {
+        assert_eq!(
+            Transaction::get_column_letter("Timestamp"),
+            Some("A".to_string())
+        );
+        assert_eq!(
+            Transaction::get_column_letter("Description"),
+            Some("B".to_string())
+        );
+        assert_eq!(Transaction::get_column_letter("Unknown"), None);
+    }
+
+    #[test]
+    fn test_index_to_column_letter() {
+        assert_eq!(Transaction::index_to_column_letter(0), "A");
+        assert_eq!(Transaction::index_to_column_letter(25), "Z");
+        assert_eq!(Transaction::index_to_column_letter(26), "AA");
+        assert_eq!(Transaction::index_to_column_letter(27), "AB");
+        assert_eq!(Transaction::index_to_column_letter(51), "AZ");
+        assert_eq!(Transaction::index_to_column_letter(52), "BA");
+        assert_eq!(Transaction::index_to_column_letter(701), "ZZ");
+        assert_eq!(Transaction::index_to_column_letter(702), "AAA");
     }
 }
