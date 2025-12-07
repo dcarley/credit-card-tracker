@@ -91,9 +91,10 @@ where
                 .collect();
 
         for mut t in transactions {
-            // If this transaction already exists in the sheet, preserve its matched_id
+            // If this transaction already exists in the sheet, preserve its matched_id and comments
             if let Some(existing) = transaction_map.get(&t.id) {
                 t.matched_id = existing.matched_id.clone();
+                t.comments = existing.comments.clone();
             }
 
             // Upsert: Overwrite existing entry (to get latest data) or insert new one
@@ -300,7 +301,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_sync_preserves_existing_matches() {
+    async fn test_sync_preserves_existing_matches_and_comments() {
         let base_datetime = mock_datetime(2025, 1, 1);
 
         let tx_sheet = mock_transaction(
@@ -315,12 +316,13 @@ mod tests {
             TransactionType::Credit,
             base_datetime,
         );
-        let tx_sheet_matched = Transaction {
+        let tx_sheet_with_metadata = Transaction {
             matched_id: Some("manually matched".to_string()),
+            comments: Some("Manually added comment".to_string()),
             ..tx_sheet.clone()
         };
 
-        let sheet_transactions = vec![tx_sheet_matched.clone()];
+        let sheet_transactions = vec![tx_sheet_with_metadata.clone()];
         let truelayer_transactions = vec![tx_sheet, tx_truelayer.clone()];
 
         let mock_sheets_client =
@@ -331,8 +333,8 @@ mod tests {
         let final_transactions = mock_sheets_client.replaced_transactions.lock().unwrap();
         assert_eq!(
             *final_transactions,
-            vec![tx_sheet_matched, tx_truelayer],
-            "existing matched_id values should be preserved during sync"
+            vec![tx_sheet_with_metadata, tx_truelayer],
+            "existing matched_id and comments should be preserved during sync"
         );
     }
 }

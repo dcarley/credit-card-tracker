@@ -20,6 +20,8 @@ pub struct Transaction {
     pub id: String,
     #[serde(rename = "Matched ID", default)]
     pub matched_id: Option<String>,
+    #[serde(default)]
+    pub comments: Option<String>,
 }
 
 impl From<TrueLayerTransaction> for Transaction {
@@ -32,6 +34,7 @@ impl From<TrueLayerTransaction> for Transaction {
             type_: tl.transaction_type.into(),
             id: tl.normalised_provider_transaction_id,
             matched_id: None,
+            comments: None,
         }
     }
 }
@@ -52,6 +55,7 @@ impl Transaction {
             type_: TransactionType::Debit,
             id: String::new(),
             matched_id: None,
+            comments: None,
         };
 
         // Serialize to write headers
@@ -212,6 +216,7 @@ pub(crate) mod test_helpers {
             type_,
             id: id.to_string(),
             matched_id: None,
+            comments: None,
         }
     }
 }
@@ -241,6 +246,7 @@ mod tests {
                 json!("Type"),
                 json!("ID"),
                 json!("Matched ID"),
+                json!("Comments"),
             ],
             vec![
                 json!("2024-11-23T10:00:00Z"),
@@ -249,6 +255,7 @@ mod tests {
                 json!("GBP"),
                 json!("Debit"),
                 json!("tx_123"),
+                Value::Null, // Option::None serializes to null
                 Value::Null, // Option::None serializes to null
             ],
         ];
@@ -267,6 +274,7 @@ mod tests {
             json!("Type"),
             json!("ID"),
             json!("Matched ID"),
+            json!("Comments"),
         ]];
         assert_eq!(rows, expected);
     }
@@ -282,6 +290,7 @@ mod tests {
                 json!("Type"),
                 json!("ID"),
                 json!("Matched ID"),
+                json!("Comments"),
             ],
             vec![
                 json!("2024-11-23T10:00:00Z"),
@@ -290,6 +299,7 @@ mod tests {
                 json!("GBP"),
                 json!("Debit"),
                 json!("tx_123"),
+                json!(""),
                 json!(""),
             ],
         ];
@@ -303,6 +313,7 @@ mod tests {
             type_: TransactionType::Debit,
             id: "tx_123".to_string(),
             matched_id: None,
+            comments: None,
         }];
         assert_eq!(transactions, expected);
     }
@@ -316,7 +327,7 @@ mod tests {
     }
 
     #[test]
-    fn test_from_sheet_rows_with_matched_id() {
+    fn test_from_sheet_rows_with_matched_id_and_comments() {
         let rows = vec![
             vec![
                 json!("Timestamp"),
@@ -326,6 +337,7 @@ mod tests {
                 json!("Type"),
                 json!("ID"),
                 json!("Matched ID"),
+                json!("Comments"),
             ],
             vec![
                 json!("2024-11-23T10:00:00Z"),
@@ -335,6 +347,7 @@ mod tests {
                 json!("Credit"),
                 json!("tx_123"),
                 json!("tx_456"),
+                json!("Manually added comment"),
             ],
         ];
 
@@ -347,6 +360,7 @@ mod tests {
             type_: TransactionType::Credit,
             id: "tx_123".to_string(),
             matched_id: Some("tx_456".to_string()),
+            comments: Some("Manually added comment".to_string()),
         }];
         assert_eq!(transactions, expected);
     }
@@ -361,6 +375,7 @@ mod tests {
             json!("Type"),
             json!("ID"),
             json!("Matched ID"),
+            json!("Comments"),
         ]];
 
         let transactions = Transaction::from_sheet_rows(&rows).unwrap();

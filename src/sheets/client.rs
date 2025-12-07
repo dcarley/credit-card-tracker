@@ -326,7 +326,7 @@ impl SheetOperations for SheetsClient {
 
     #[instrument(name = "Fetching sheet", skip(self))]
     async fn read_sheet(&self, sheet_name: &str) -> Result<Vec<Transaction>> {
-        let range = format!("{}!A:G", sheet_name);
+        let range = format!("{}!A:Z", sheet_name);
         let (_, response) = self
             .hub
             .spreadsheets()
