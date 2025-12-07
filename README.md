@@ -2,6 +2,8 @@
 
 Synchronise and reconcile credit card transactions to Google Sheets via Open Banking.
 
+![Example screenshot of spreadsheet with transactions](example.png)
+
 The reconciliation process matches debits to the nearest credit with the same transaction value, allowing you to see which transactions remain to be paid off. Any manually annotated matches are preserved in the spreadsheet and not considered for automatic matching.
 
 A variety of card providers are supported (e.g. Amex) via Open Banking. Each card is synced to a separate tab in the spreadsheet.
