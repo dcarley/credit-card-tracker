@@ -73,7 +73,7 @@ To see the config and cache paths that the utility uses:
 credit-card-tracker show paths
 ```
 
-An example config file is provided as [`config.toml.example`](./config.toml.example) which can be edited and copied into place.
+An example config file is provided as [`config.example.toml`](./config.example.toml) which can be edited and copied into place.
 
 ## Usage
 
