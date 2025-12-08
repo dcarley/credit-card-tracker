@@ -79,7 +79,7 @@ where
             .await?;
 
         let sheet_name = &card.name;
-        let sheet_id = self.sheets_client.ensure_sheet(sheet_name).await?;
+        let sheet = self.sheets_client.ensure_sheet(sheet_name).await?;
 
         let existing_transactions = self.sheets_client.read_sheet(sheet_name).await?;
         let existing_transactions_count = existing_transactions.len();
@@ -120,7 +120,7 @@ where
         }
 
         self.sheets_client
-            .write_sheet(sheet_id, sheet_name, &all_transactions)
+            .write_sheet(&sheet, sheet_name, &all_transactions)
             .await?;
 
         info!(
@@ -141,6 +141,7 @@ mod mocks {
     use crate::models::{Card, Transaction};
     use async_trait::async_trait;
     use chrono::Duration;
+    use google_sheets4::api::{Sheet, SheetProperties};
     use std::sync::{Arc, Mutex};
 
     pub(crate) async fn sync_against_mocks(
@@ -197,8 +198,14 @@ mod mocks {
 
     #[async_trait]
     impl SheetOperations for MockSheetsClient {
-        async fn ensure_sheet(&self, _sheet_name: &str) -> Result<i32> {
-            Ok(0)
+        async fn ensure_sheet(&self, _sheet_name: &str) -> Result<Sheet> {
+            Ok(Sheet {
+                properties: Some(SheetProperties {
+                    sheet_id: Some(0),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            })
         }
 
         async fn read_sheet(&self, _sheet_name: &str) -> Result<Vec<Transaction>> {
@@ -207,7 +214,7 @@ mod mocks {
 
         async fn write_sheet(
             &self,
-            _sheet_id: i32,
+            _sheet: &Sheet,
             _sheet_name: &str,
             transactions: &[Transaction],
         ) -> Result<()> {

@@ -9,9 +9,10 @@ use google_sheets4::FieldMask;
 use google_sheets4::api::{AddConditionalFormatRuleRequest, Sheets};
 use google_sheets4::api::{
     AddSheetRequest, BatchUpdateSpreadsheetRequest, BooleanCondition, BooleanRule, CellData,
-    CellFormat, ClearValuesRequest, Color, ConditionValue, ConditionalFormatRule, GridProperties,
-    GridRange, RepeatCellRequest, Request, Scope, SheetProperties, Spreadsheet,
-    SpreadsheetProperties, TextFormat, UpdateSheetPropertiesRequest, ValueRange,
+    CellFormat, ClearValuesRequest, Color, ConditionValue, ConditionalFormatRule,
+    DeleteConditionalFormatRuleRequest, GridProperties, GridRange, RepeatCellRequest, Request,
+    Scope, Sheet, SheetProperties, Spreadsheet, SpreadsheetProperties, TextFormat,
+    UpdateSheetPropertiesRequest, ValueRange,
 };
 use hyper_rustls::HttpsConnector;
 use hyper_util::client::legacy::Client;
@@ -136,7 +137,7 @@ impl SheetsClient {
         Ok((spreadsheet_id, spreadsheet_url))
     }
 
-    async fn get_sheet_id(&self, sheet_name: &str) -> Result<Option<i32>> {
+    async fn get_sheet(&self, sheet_name: &str) -> Result<Option<Sheet>> {
         let (_, spreadsheet) = self
             .hub
             .spreadsheets()
@@ -147,24 +148,22 @@ impl SheetsClient {
             .await
             .map_err(|e| AppError::Sheets(format!("Failed to get spreadsheet: {}", e)))?;
 
-        let sheet_id = spreadsheet
+        let sheet = spreadsheet
             .sheets
             .unwrap_or_default()
-            .iter()
+            .into_iter()
             .find(|sheet| {
                 sheet
                     .properties
                     .as_ref()
                     .map(|props| props.title.as_deref() == Some(sheet_name))
                     .unwrap_or(false)
-            })
-            .and_then(|sheet| sheet.properties.as_ref())
-            .and_then(|props| props.sheet_id);
+            });
 
-        Ok(sheet_id)
+        Ok(sheet)
     }
 
-    async fn create_sheet(&self, sheet_name: &str) -> Result<i32> {
+    async fn create_sheet(&self, sheet_name: &str) -> Result<Sheet> {
         let request = Request {
             add_sheet: Some(AddSheetRequest {
                 properties: Some(SheetProperties {
@@ -192,20 +191,28 @@ impl SheetsClient {
             .await
             .map_err(|e| AppError::Sheets(format!("Failed to create sheet: {}", e)))?;
 
-        let sheet_id = response
+        let sheet_properties = response
             .replies
             .and_then(|replies| replies.into_iter().next())
             .and_then(|reply| reply.add_sheet)
             .and_then(|add_sheet| add_sheet.properties)
-            .and_then(|props| props.sheet_id)
             .ok_or_else(|| {
-                AppError::Sheets("Failed to get sheet ID from create response".to_string())
+                AppError::Sheets("Failed to get sheet properties from create response".to_string())
             })?;
 
-        Ok(sheet_id)
+        Ok(Sheet {
+            properties: Some(sheet_properties),
+            ..Default::default()
+        })
     }
 
-    async fn apply_formatting(&self, sheet_id: i32) -> Result<()> {
+    async fn apply_formatting(&self, sheet: &Sheet) -> Result<()> {
+        let sheet_id = sheet
+            .properties
+            .as_ref()
+            .and_then(|p| p.sheet_id)
+            .ok_or_else(|| AppError::Sheets("Sheet ID not found".to_string()))?;
+
         let bold_header_row = Request {
             repeat_cell: Some(RepeatCellRequest {
                 range: Some(GridRange {
@@ -245,6 +252,46 @@ impl SheetsClient {
             ..Default::default()
         };
 
+        let highlight_rule = self.build_hightlight_rule(sheet_id)?;
+        let delete_rules = self.build_delete_rules(sheet_id, sheet.conditional_formats.clone());
+
+        let mut requests = Vec::new();
+        requests.extend(delete_rules);
+        requests.extend(vec![highlight_rule, bold_header_row, freeze_header_row]);
+
+        let batch_update = BatchUpdateSpreadsheetRequest {
+            requests: Some(requests),
+            ..Default::default()
+        };
+
+        self.hub
+            .spreadsheets()
+            .batch_update(batch_update, &self.spreadsheet_id)
+            .add_scope(AUTH_SCOPE)
+            .doit()
+            .await
+            .map_err(|e| AppError::Sheets(format!("Failed to apply formatting: {}", e)))?;
+        Ok(())
+    }
+
+    fn build_delete_rules(
+        &self,
+        sheet_id: i32,
+        rules: Option<Vec<ConditionalFormatRule>>,
+    ) -> Vec<Request> {
+        let existing_rules_count = rules.as_ref().map_or(0, |v| v.len());
+        (0..existing_rules_count)
+            .map(|_| Request {
+                delete_conditional_format_rule: Some(DeleteConditionalFormatRuleRequest {
+                    index: Some(0), // Delete the first rule repeatedly
+                    sheet_id: Some(sheet_id),
+                }),
+                ..Default::default()
+            })
+            .collect()
+    }
+
+    fn build_hightlight_rule(&self, sheet_id: i32) -> Result<Request> {
         let light_yellow = Color {
             red: Some(0.988),
             green: Some(0.910),
@@ -256,7 +303,7 @@ impl SheetsClient {
         let matched_id_column = Transaction::get_column_letter("Matched ID")
             .ok_or_else(|| AppError::Sheets("Matched ID column not found".to_string()))?;
 
-        let highlight_unmatched_rows = Request {
+        Ok(Request {
             add_conditional_format_rule: Some(AddConditionalFormatRuleRequest {
                 index: Some(0),
                 rule: Some(ConditionalFormatRule {
@@ -287,41 +334,25 @@ impl SheetsClient {
                 }),
             }),
             ..Default::default()
-        };
-
-        let batch_update = BatchUpdateSpreadsheetRequest {
-            requests: Some(vec![
-                bold_header_row,
-                freeze_header_row,
-                highlight_unmatched_rows,
-            ]),
-            ..Default::default()
-        };
-
-        self.hub
-            .spreadsheets()
-            .batch_update(batch_update, &self.spreadsheet_id)
-            .add_scope(AUTH_SCOPE)
-            .doit()
-            .await
-            .map_err(|e| AppError::Sheets(format!("Failed to apply formatting: {}", e)))?;
-
-        Ok(())
+        })
     }
 }
 
 #[async_trait]
 impl SheetOperations for SheetsClient {
     #[instrument(name = "Ensuring sheet exists", skip(self))]
-    async fn ensure_sheet(&self, sheet_name: &str) -> Result<i32> {
-        if let Some(sheet_id) = self.get_sheet_id(sheet_name).await? {
-            debug!(sheet_id, "Found existing sheet");
-            Ok(sheet_id)
-        } else {
-            let sheet_id = self.create_sheet(sheet_name).await?;
-            debug!(sheet_id, "Created sheet");
-            Ok(sheet_id)
+    async fn ensure_sheet(&self, sheet_name: &str) -> Result<Sheet> {
+        let (sheet, created) = match self.get_sheet(sheet_name).await? {
+            Some(sheet) => (sheet, false),
+            None => (self.create_sheet(sheet_name).await?, true),
+        };
+        let sheet_id = sheet.properties.as_ref().and_then(|p| p.sheet_id);
+        match created {
+            true => debug!(?sheet_id, "Created sheet"),
+            false => debug!(?sheet_id, "Found existing sheet"),
         }
+
+        Ok(sheet)
     }
 
     #[instrument(name = "Fetching sheet", skip(self))]
@@ -346,10 +377,10 @@ impl SheetOperations for SheetsClient {
         Transaction::from_sheet_rows(&values)
     }
 
-    #[instrument(name = "Writing sheet", skip(self, transactions))]
+    #[instrument(name = "Writing sheet", skip(self, sheet, transactions))]
     async fn write_sheet(
         &self,
-        sheet_id: i32,
+        sheet: &Sheet,
         sheet_name: &str,
         transactions: &[Transaction],
     ) -> Result<()> {
@@ -384,7 +415,7 @@ impl SheetOperations for SheetsClient {
             .map_err(|e| AppError::Sheets(format!("Failed to write transactions: {}", e)))?;
 
         // Apply formatting
-        self.apply_formatting(sheet_id).await?;
+        self.apply_formatting(sheet).await?;
 
         Ok(())
     }

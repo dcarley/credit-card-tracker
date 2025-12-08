@@ -9,16 +9,17 @@ pub use auth::clear_tokens as clear_sheets_tokens;
 use crate::error::Result;
 use crate::models::Transaction;
 use async_trait::async_trait;
+use google_sheets4::api::Sheet;
 
 #[async_trait]
 pub trait SheetOperations {
-    async fn ensure_sheet(&self, sheet_name: &str) -> Result<i32>;
+    async fn ensure_sheet(&self, sheet_name: &str) -> Result<Sheet>;
 
     async fn read_sheet(&self, sheet_name: &str) -> Result<Vec<Transaction>>;
 
     async fn write_sheet(
         &self,
-        sheet_id: i32,
+        sheet: &Sheet,
         sheet_name: &str,
         transactions: &[Transaction],
     ) -> Result<()>;
