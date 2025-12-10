@@ -124,12 +124,15 @@ where
             .write_sheet(&sheet, sheet_name, &all_transactions)
             .await?;
 
-        info!(
-            total = all_transactions.len(),
-            new = all_transactions.len() - existing_transactions_count,
-            matches = matches.len(),
-            "Card synced"
-        );
+        let new_transactions_count = all_transactions.len() - existing_transactions_count;
+        if new_transactions_count > 0 {
+            info!(count = new_transactions_count, "New transactions added");
+        }
+
+        let matches_count = matches.len();
+        if matches_count > 0 {
+            info!(count = matches_count, "Transactions matched");
+        }
 
         Ok(())
     }

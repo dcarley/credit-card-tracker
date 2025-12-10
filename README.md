@@ -81,7 +81,8 @@ To sync, which will authenticate if necessary:
 
 ```console
 % credit-card-tracker sync
-2025-12-03T00:02:05.888933Z  INFO Sync:Syncing card{card=British Airways American Express® C}: credit_card_tracker::sync::engine: Card synced total=115 new=38 matches=20
+2025-12-03T00:02:05.888933Z  INFO Sync:Syncing card{card=British Airways American Express® C}: credit_card_tracker::sync::engine: New transactions added count=38
+2025-12-03T00:02:05.888990Z  INFO Sync:Syncing card{card=British Airways American Express® C}: credit_card_tracker::sync::engine: Transactions matched count=20
 2025-12-03T00:02:05.889190Z  INFO credit_card_tracker::cli::sync: Sync completed url="https://docs.google.com/spreadsheets/d/REDACTED"
 ```
 
