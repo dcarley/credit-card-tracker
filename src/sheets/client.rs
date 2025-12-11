@@ -252,12 +252,9 @@ impl SheetsClient {
             ..Default::default()
         };
 
-        let highlight_rule = self.build_hightlight_rule(sheet_id)?;
-        let delete_rules = self.build_delete_rules(sheet_id, sheet.conditional_formats.clone());
-
         let mut requests = Vec::new();
-        requests.extend(delete_rules);
-        requests.extend(vec![highlight_rule, bold_header_row, freeze_header_row]);
+        requests.extend(vec![bold_header_row, freeze_header_row]);
+        requests.extend(self.build_highlight_rules(sheet_id, sheet)?);
 
         let batch_update = BatchUpdateSpreadsheetRequest {
             requests: Some(requests),
@@ -274,24 +271,9 @@ impl SheetsClient {
         Ok(())
     }
 
-    fn build_delete_rules(
-        &self,
-        sheet_id: i32,
-        rules: Option<Vec<ConditionalFormatRule>>,
-    ) -> Vec<Request> {
-        let existing_rules_count = rules.as_ref().map_or(0, |v| v.len());
-        (0..existing_rules_count)
-            .map(|_| Request {
-                delete_conditional_format_rule: Some(DeleteConditionalFormatRuleRequest {
-                    index: Some(0), // Delete the first rule repeatedly
-                    sheet_id: Some(sheet_id),
-                }),
-                ..Default::default()
-            })
-            .collect()
-    }
+    fn build_highlight_rules(&self, sheet_id: i32, sheet: &Sheet) -> Result<Vec<Request>> {
+        let mut requests = Vec::new();
 
-    fn build_hightlight_rule(&self, sheet_id: i32) -> Result<Request> {
         let light_yellow = Color {
             red: Some(0.988),
             green: Some(0.910),
@@ -303,7 +285,19 @@ impl SheetsClient {
         let matched_id_column = Transaction::get_column_letter("Matched ID")
             .ok_or_else(|| AppError::Sheets("Matched ID column not found".to_string()))?;
 
-        Ok(Request {
+        if let Some(conditional_format_rules) = &sheet.conditional_formats {
+            for _ in conditional_format_rules {
+                requests.push(Request {
+                    delete_conditional_format_rule: Some(DeleteConditionalFormatRuleRequest {
+                        index: Some(0), // Delete the first rule repeatedly
+                        sheet_id: Some(sheet_id),
+                    }),
+                    ..Default::default()
+                });
+            }
+        }
+
+        requests.push(Request {
             add_conditional_format_rule: Some(AddConditionalFormatRuleRequest {
                 index: Some(0),
                 rule: Some(ConditionalFormatRule {
@@ -334,7 +328,9 @@ impl SheetsClient {
                 }),
             }),
             ..Default::default()
-        })
+        });
+
+        Ok(requests)
     }
 }
 
