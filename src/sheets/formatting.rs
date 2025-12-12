@@ -55,15 +55,12 @@ pub(super) fn freeze_header_rule(sheet_id: i32) -> Request {
 }
 
 /// Highlight rows where "ID" is filled but "Matched ID" is blank.
+/// Unmatched debits are highlighted yellow, unmatched credits are highlighted green.
 pub(super) fn highlight_rules(sheet_id: i32, sheet: &Sheet) -> Result<Vec<Request>> {
     let mut requests = Vec::new();
 
-    let light_yellow = Color {
-        red: Some(0.988),
-        green: Some(0.910),
-        blue: Some(0.698),
-        alpha: Some(1.0),
-    };
+    let type_column = Transaction::get_column_letter("Type")
+        .ok_or_else(|| AppError::Sheets("Type column not found".to_string()))?;
     let id_column = Transaction::get_column_letter("ID")
         .ok_or_else(|| AppError::Sheets("ID column not found".to_string()))?;
     let matched_id_column = Transaction::get_column_letter("Matched ID")
@@ -84,38 +81,64 @@ pub(super) fn highlight_rules(sheet_id: i32, sheet: &Sheet) -> Result<Vec<Reques
         });
     }
 
-    requests.push(Request {
-        add_conditional_format_rule: Some(AddConditionalFormatRuleRequest {
-            index: Some(0),
-            rule: Some(ConditionalFormatRule {
-                ranges: Some(vec![GridRange {
-                    sheet_id: Some(sheet_id),
-                    start_row_index: Some(1), // Skip header row
-                    end_row_index: None,
-                    start_column_index: None,
-                    end_column_index: None,
-                }]),
-                boolean_rule: Some(BooleanRule {
-                    condition: Some(BooleanCondition {
-                        type_: Some("CUSTOM_FORMULA".to_string()),
-                        values: Some(vec![ConditionValue {
-                            user_entered_value: Some(format!(
-                                "=AND(NOT(ISBLANK(${}2)), ISBLANK(${}2))",
-                                id_column, matched_id_column,
-                            )),
+    let rules = [
+        (
+            "Credit",
+            Color {
+                // Light green
+                red: Some(0.698),
+                green: Some(0.910),
+                blue: Some(0.698),
+                alpha: Some(1.0),
+            },
+        ),
+        (
+            "Debit",
+            Color {
+                // Light yellow
+                red: Some(0.988),
+                green: Some(0.910),
+                blue: Some(0.698),
+                alpha: Some(1.0),
+            },
+        ),
+    ];
+
+    // Add conditional format rules for each transaction type
+    for (index, (transaction_type, colour)) in rules.iter().enumerate() {
+        requests.push(Request {
+            add_conditional_format_rule: Some(AddConditionalFormatRuleRequest {
+                index: Some(index as i32),
+                rule: Some(ConditionalFormatRule {
+                    ranges: Some(vec![GridRange {
+                        sheet_id: Some(sheet_id),
+                        start_row_index: Some(1), // Skip header row
+                        end_row_index: None,
+                        start_column_index: None,
+                        end_column_index: None,
+                    }]),
+                    boolean_rule: Some(BooleanRule {
+                        condition: Some(BooleanCondition {
+                            type_: Some("CUSTOM_FORMULA".to_string()),
+                            values: Some(vec![ConditionValue {
+                                user_entered_value: Some(format!(
+                                    "=AND(NOT(ISBLANK(${}2)), ISBLANK(${}2), ${}2=\"{}\")",
+                                    id_column, matched_id_column, type_column, transaction_type,
+                                )),
+                                ..Default::default()
+                            }]),
+                        }),
+                        format: Some(CellFormat {
+                            background_color: Some(colour.clone()),
                             ..Default::default()
-                        }]),
+                        }),
                     }),
-                    format: Some(CellFormat {
-                        background_color: Some(light_yellow),
-                        ..Default::default()
-                    }),
+                    ..Default::default()
                 }),
-                ..Default::default()
             }),
-        }),
-        ..Default::default()
-    });
+            ..Default::default()
+        });
+    }
 
     Ok(requests)
 }
@@ -205,7 +228,7 @@ mod tests {
         };
 
         let reqs = highlight_rules(123, &sheet).unwrap();
-        assert_eq!(reqs.len(), 3, "should have 3 requests, got {:?}", reqs);
+        assert_eq!(reqs.len(), 4, "should have 4 requests (2 deletes + 2 adds)");
         let mut reqs = reqs.iter();
 
         let req = reqs
@@ -226,12 +249,14 @@ mod tests {
         assert_eq!(req.sheet_id, Some(123));
         assert_eq!(req.index, Some(0));
 
+        // First add request (Credit - green)
         let req = reqs
             .next()
             .unwrap()
             .add_conditional_format_rule
             .as_ref()
             .unwrap();
+        assert_eq!(req.index, Some(0));
         let rule = req.rule.as_ref().unwrap();
         let boolean_rule = rule.boolean_rule.as_ref().unwrap();
         let condition = boolean_rule.condition.as_ref().unwrap();
@@ -242,6 +267,27 @@ mod tests {
             .as_ref()
             .unwrap();
         assert!(formula.contains("ISBLANK"));
+        assert!(formula.contains("Credit"));
+
+        // Second add request (Debit - yellow)
+        let req = reqs
+            .next()
+            .unwrap()
+            .add_conditional_format_rule
+            .as_ref()
+            .unwrap();
+        assert_eq!(req.index, Some(1));
+        let rule = req.rule.as_ref().unwrap();
+        let boolean_rule = rule.boolean_rule.as_ref().unwrap();
+        let condition = boolean_rule.condition.as_ref().unwrap();
+
+        assert_eq!(condition.type_.as_deref(), Some("CUSTOM_FORMULA"));
+        let formula = condition.values.as_ref().unwrap()[0]
+            .user_entered_value
+            .as_ref()
+            .unwrap();
+        assert!(formula.contains("ISBLANK"));
+        assert!(formula.contains("Debit"));
     }
 
     #[test]
