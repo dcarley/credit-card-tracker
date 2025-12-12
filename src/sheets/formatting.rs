@@ -2,9 +2,10 @@ use crate::error::{AppError, Result};
 use crate::models::Transaction;
 use google_sheets4::FieldMask;
 use google_sheets4::api::{
-    AddConditionalFormatRuleRequest, BooleanCondition, BooleanRule, CellData, CellFormat, Color,
-    ConditionValue, ConditionalFormatRule, DeleteConditionalFormatRuleRequest, GridProperties,
-    GridRange, RepeatCellRequest, Request, Sheet, SheetProperties, TextFormat,
+    AddConditionalFormatRuleRequest, AddProtectedRangeRequest, BooleanCondition, BooleanRule,
+    CellData, CellFormat, Color, ConditionValue, ConditionalFormatRule,
+    DeleteConditionalFormatRuleRequest, DeleteProtectedRangeRequest, GridProperties, GridRange,
+    ProtectedRange, RepeatCellRequest, Request, Sheet, SheetProperties, TextFormat,
     UpdateSheetPropertiesRequest,
 };
 
@@ -119,6 +120,49 @@ pub(super) fn highlight_rules(sheet_id: i32, sheet: &Sheet) -> Result<Vec<Reques
     Ok(requests)
 }
 
+/// Protect all columns up to and including "ID" column.
+pub(super) fn protection_rules(sheet_id: i32, sheet: &Sheet) -> Result<Vec<Request>> {
+    let mut requests = Vec::new();
+
+    sheet
+        .protected_ranges
+        .as_deref()
+        .unwrap_or_default()
+        .iter()
+        .filter_map(|range| range.protected_range_id)
+        .for_each(|id| {
+            requests.push(Request {
+                delete_protected_range: Some(DeleteProtectedRangeRequest {
+                    protected_range_id: Some(id),
+                }),
+                ..Default::default()
+            });
+        });
+
+    let id_col_idx = Transaction::get_column_index("ID")
+        .ok_or_else(|| AppError::Sheets("ID column not found".to_string()))?;
+    let end_col_index = (id_col_idx + 1) as i32;
+
+    requests.push(Request {
+        add_protected_range: Some(AddProtectedRangeRequest {
+            protected_range: Some(ProtectedRange {
+                range: Some(GridRange {
+                    sheet_id: Some(sheet_id),
+                    start_column_index: Some(0),
+                    end_column_index: Some(end_col_index),
+                    ..Default::default()
+                }),
+                description: Some("Managed by credit-card-tracker".to_string()),
+                warning_only: Some(true),
+                ..Default::default()
+            }),
+        }),
+        ..Default::default()
+    });
+
+    Ok(requests)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -198,5 +242,52 @@ mod tests {
             .as_ref()
             .unwrap();
         assert!(formula.contains("ISBLANK"));
+    }
+
+    #[test]
+    fn test_protection_rules() {
+        // Mock sheet with one existing protected range
+        let sheet = Sheet {
+            protected_ranges: Some(vec![
+                ProtectedRange {
+                    protected_range_id: Some(222),
+                    ..Default::default()
+                },
+                ProtectedRange {
+                    protected_range_id: Some(333),
+                    ..Default::default()
+                },
+            ]),
+            ..Default::default()
+        };
+
+        let reqs = protection_rules(111, &sheet).unwrap();
+        assert_eq!(reqs.len(), 3, "should have 3 requests, got {:?}", reqs);
+        let mut reqs = reqs.iter();
+
+        let req = reqs
+            .next()
+            .unwrap()
+            .delete_protected_range
+            .as_ref()
+            .unwrap();
+        assert_eq!(req.protected_range_id, Some(222));
+
+        let req = reqs
+            .next()
+            .unwrap()
+            .delete_protected_range
+            .as_ref()
+            .unwrap();
+        assert_eq!(req.protected_range_id, Some(333));
+
+        let req = reqs.next().unwrap().add_protected_range.as_ref().unwrap();
+        let protected_range = req.protected_range.as_ref().unwrap();
+        assert_eq!(protected_range.warning_only, Some(true));
+
+        let range = protected_range.range.as_ref().unwrap();
+        assert_eq!(range.sheet_id, Some(111));
+        assert_eq!(range.start_column_index, Some(0));
+        assert!(range.end_column_index.unwrap() > 1);
     }
 }

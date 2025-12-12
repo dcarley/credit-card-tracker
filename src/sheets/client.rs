@@ -1,5 +1,5 @@
 use super::SheetOperations;
-use super::formatting::{bold_header_rule, freeze_header_rule, highlight_rules};
+use super::formatting::{bold_header_rule, freeze_header_rule, highlight_rules, protection_rules};
 use crate::config::GoogleConfig;
 use crate::error::{AppError, Result};
 use crate::models::{FromSheetRows, ToSheetRows, Transaction};
@@ -213,6 +213,7 @@ impl SheetsClient {
         requests.push(bold_header_rule(sheet_id));
         requests.push(freeze_header_rule(sheet_id));
         requests.extend(highlight_rules(sheet_id, sheet)?);
+        requests.extend(protection_rules(sheet_id, sheet)?);
 
         let batch_update = BatchUpdateSpreadsheetRequest {
             requests: Some(requests),
