@@ -218,7 +218,6 @@ mod tests {
 
     #[test]
     fn test_highlight_rules() {
-        // Mock sheet with one existing rule
         let sheet = Sheet {
             conditional_formats: Some(vec![
                 ConditionalFormatRule::default(),
@@ -231,6 +230,7 @@ mod tests {
         assert_eq!(reqs.len(), 4, "should have 4 requests (2 deletes + 2 adds)");
         let mut reqs = reqs.iter();
 
+        // First delete request
         let req = reqs
             .next()
             .unwrap()
@@ -240,6 +240,7 @@ mod tests {
         assert_eq!(req.sheet_id, Some(123));
         assert_eq!(req.index, Some(0));
 
+        // Second delete request
         let req = reqs
             .next()
             .unwrap()
@@ -292,7 +293,6 @@ mod tests {
 
     #[test]
     fn test_protection_rules() {
-        // Mock sheet with one existing protected range
         let sheet = Sheet {
             protected_ranges: Some(vec![
                 ProtectedRange {
@@ -308,9 +308,10 @@ mod tests {
         };
 
         let reqs = protection_rules(111, &sheet).unwrap();
-        assert_eq!(reqs.len(), 3, "should have 3 requests, got {:?}", reqs);
+        assert_eq!(reqs.len(), 3, "should have 3 requests (2 deletes + 1 add)",);
         let mut reqs = reqs.iter();
 
+        // First delete request
         let req = reqs
             .next()
             .unwrap()
@@ -319,6 +320,7 @@ mod tests {
             .unwrap();
         assert_eq!(req.protected_range_id, Some(222));
 
+        // Second delete request
         let req = reqs
             .next()
             .unwrap()
@@ -327,6 +329,7 @@ mod tests {
             .unwrap();
         assert_eq!(req.protected_range_id, Some(333));
 
+        // Add protected range request
         let req = reqs.next().unwrap().add_protected_range.as_ref().unwrap();
         let protected_range = req.protected_range.as_ref().unwrap();
         assert_eq!(protected_range.warning_only, Some(true));
