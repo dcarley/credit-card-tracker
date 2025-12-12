@@ -1,18 +1,14 @@
 use super::SheetOperations;
+use super::formatting::{bold_header_rule, freeze_header_rule, highlight_rules};
 use crate::config::GoogleConfig;
 use crate::error::{AppError, Result};
 use crate::models::{FromSheetRows, ToSheetRows, Transaction};
 use crate::sheets::auth::create_and_verify_authenticator;
 use async_trait::async_trait;
 use google_drive3::api::DriveHub;
-use google_sheets4::FieldMask;
-use google_sheets4::api::{AddConditionalFormatRuleRequest, Sheets};
 use google_sheets4::api::{
-    AddSheetRequest, BatchUpdateSpreadsheetRequest, BooleanCondition, BooleanRule, CellData,
-    CellFormat, ClearValuesRequest, Color, ConditionValue, ConditionalFormatRule,
-    DeleteConditionalFormatRuleRequest, GridProperties, GridRange, RepeatCellRequest, Request,
-    Scope, Sheet, SheetProperties, Spreadsheet, SpreadsheetProperties, TextFormat,
-    UpdateSheetPropertiesRequest, ValueRange,
+    AddSheetRequest, BatchUpdateSpreadsheetRequest, ClearValuesRequest, Request, Scope, Sheet,
+    SheetProperties, Sheets, Spreadsheet, SpreadsheetProperties, ValueRange,
 };
 use hyper_rustls::HttpsConnector;
 use hyper_util::client::legacy::Client;
@@ -213,48 +209,10 @@ impl SheetsClient {
             .and_then(|p| p.sheet_id)
             .ok_or_else(|| AppError::Sheets("Sheet ID not found".to_string()))?;
 
-        let bold_header_row = Request {
-            repeat_cell: Some(RepeatCellRequest {
-                range: Some(GridRange {
-                    sheet_id: Some(sheet_id),
-                    start_row_index: Some(0),
-                    end_row_index: Some(1),
-                    start_column_index: None,
-                    end_column_index: None,
-                }),
-                cell: Some(CellData {
-                    user_entered_format: Some(CellFormat {
-                        text_format: Some(TextFormat {
-                            bold: Some(true),
-                            ..Default::default()
-                        }),
-                        ..Default::default()
-                    }),
-                    ..Default::default()
-                }),
-                fields: Some(FieldMask::new(&["userEnteredFormat.textFormat.bold"])),
-            }),
-            ..Default::default()
-        };
-
-        let freeze_header_row = Request {
-            update_sheet_properties: Some(UpdateSheetPropertiesRequest {
-                properties: Some(SheetProperties {
-                    sheet_id: Some(sheet_id),
-                    grid_properties: Some(GridProperties {
-                        frozen_row_count: Some(1),
-                        ..Default::default()
-                    }),
-                    ..Default::default()
-                }),
-                fields: Some(FieldMask::new(&["gridProperties.frozenRowCount"])),
-            }),
-            ..Default::default()
-        };
-
         let mut requests = Vec::new();
-        requests.extend(vec![bold_header_row, freeze_header_row]);
-        requests.extend(self.build_highlight_rules(sheet_id, sheet)?);
+        requests.push(bold_header_rule(sheet_id));
+        requests.push(freeze_header_rule(sheet_id));
+        requests.extend(highlight_rules(sheet_id, sheet)?);
 
         let batch_update = BatchUpdateSpreadsheetRequest {
             requests: Some(requests),
@@ -269,68 +227,6 @@ impl SheetsClient {
             .await
             .map_err(|e| AppError::Sheets(format!("Failed to apply formatting: {}", e)))?;
         Ok(())
-    }
-
-    fn build_highlight_rules(&self, sheet_id: i32, sheet: &Sheet) -> Result<Vec<Request>> {
-        let mut requests = Vec::new();
-
-        let light_yellow = Color {
-            red: Some(0.988),
-            green: Some(0.910),
-            blue: Some(0.698),
-            alpha: Some(1.0),
-        };
-        let id_column = Transaction::get_column_letter("ID")
-            .ok_or_else(|| AppError::Sheets("ID column not found".to_string()))?;
-        let matched_id_column = Transaction::get_column_letter("Matched ID")
-            .ok_or_else(|| AppError::Sheets("Matched ID column not found".to_string()))?;
-
-        if let Some(conditional_format_rules) = &sheet.conditional_formats {
-            for _ in conditional_format_rules {
-                requests.push(Request {
-                    delete_conditional_format_rule: Some(DeleteConditionalFormatRuleRequest {
-                        index: Some(0), // Delete the first rule repeatedly
-                        sheet_id: Some(sheet_id),
-                    }),
-                    ..Default::default()
-                });
-            }
-        }
-
-        requests.push(Request {
-            add_conditional_format_rule: Some(AddConditionalFormatRuleRequest {
-                index: Some(0),
-                rule: Some(ConditionalFormatRule {
-                    ranges: Some(vec![GridRange {
-                        sheet_id: Some(sheet_id),
-                        start_row_index: Some(1), // Skip header row
-                        end_row_index: None,
-                        start_column_index: None,
-                        end_column_index: None,
-                    }]),
-                    boolean_rule: Some(BooleanRule {
-                        condition: Some(BooleanCondition {
-                            type_: Some("CUSTOM_FORMULA".to_string()),
-                            values: Some(vec![ConditionValue {
-                                user_entered_value: Some(format!(
-                                    "=AND(NOT(ISBLANK(${}2)), ISBLANK(${}2))",
-                                    id_column, matched_id_column,
-                                )),
-                                ..Default::default()
-                            }]),
-                        }),
-                        format: Some(CellFormat {
-                            background_color: Some(light_yellow),
-                            ..Default::default()
-                        }),
-                    }),
-                    ..Default::default()
-                }),
-            }),
-            ..Default::default()
-        });
-
-        Ok(requests)
     }
 }
 
