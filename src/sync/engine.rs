@@ -131,7 +131,7 @@ where
 
         let matches_count = matches.len();
         if matches_count > 0 {
-            info!(count = matches_count, "Transaction pairss matched");
+            info!(count = matches_count, "Transaction pairs matched");
         }
 
         Ok(())
