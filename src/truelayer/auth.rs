@@ -1,5 +1,6 @@
 use crate::config::TrueLayerConfig;
 use crate::error::{AppError, Result};
+use indoc::formatdoc;
 use oauth2::{
     AuthUrl, AuthorizationCode, Client, ClientId, ClientSecret, CsrfToken, EndpointNotSet,
     EndpointSet, PkceCodeChallenge, PkceCodeVerifier, RedirectUrl, RefreshToken, Scope,
@@ -17,6 +18,7 @@ use std::os::unix::fs::OpenOptionsExt;
 use std::path::PathBuf;
 use tiny_http::{Response, Server};
 use tracing::{debug, info, instrument, warn};
+use tracing_indicatif::suspend_tracing_indicatif;
 use url::Url;
 
 const TRUELAYER_SCOPES: &[&str] = &["cards", "transactions", "offline_access"];
@@ -116,10 +118,20 @@ impl TrueLayerAuth {
             .map_err(|e| AppError::Auth(format!("Failed to bind to {}: {}", bind_addr, e)))?;
 
         let (auth_url, csrf_token) = auth_request.url();
-        info!(
-            url = auth_url.to_string(),
-            "TrueLayer authentication required"
-        );
+        suspend_tracing_indicatif(|| {
+            eprintln!(
+                "{}",
+                formatdoc! {"
+
+                TrueLayer authentication required.
+                Please open the following URL in your browser to authorize access:
+
+                    {auth_url}
+
+                Waiting for authorization via local server...
+            "}
+            );
+        });
 
         let token_result = self
             .wait_for_auth_code_and_exchange(server, csrf_token, pkce_verifier)

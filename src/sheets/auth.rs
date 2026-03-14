@@ -4,11 +4,12 @@ use crate::sheets::client::AUTH_SCOPE;
 use dialoguer::Input;
 use hyper_rustls::HttpsConnector;
 use hyper_util::client::legacy::connect::HttpConnector;
+use indoc::formatdoc;
 use std::fs;
 use std::future::Future;
 use std::path::PathBuf;
 use std::pin::Pin;
-use tracing::{debug, info, instrument};
+use tracing::{debug, instrument};
 use tracing_indicatif::suspend_tracing_indicatif;
 use yup_oauth2::{
     ApplicationSecret, InstalledFlowAuthenticator, InstalledFlowReturnMethod,
@@ -80,14 +81,28 @@ impl InstalledFlowDelegate for IndicatifDelegate {
         need_code: bool,
     ) -> Pin<Box<dyn Future<Output = std::result::Result<String, String>> + Send + 'a>> {
         Box::pin(async move {
-            info!(url, "Google Sheets authentication required");
+            suspend_tracing_indicatif(|| {
+                eprintln!(
+                    "{}",
+                    formatdoc! {"
+                    Google Sheets authentication required.
+                    Please open the following URL in your browser to authorize access:
+
+                        {url}
+                "}
+                );
+            });
+
             if !need_code {
+                suspend_tracing_indicatif(|| {
+                    eprintln!("Waiting for authorization via local server...");
+                });
                 return Ok(String::new());
             }
 
             let code = suspend_tracing_indicatif(|| {
                 Input::new()
-                    .with_prompt("Enter code")
+                    .with_prompt("Enter the authorization code from your browser")
                     .interact_text()
                     .unwrap_or_default()
             });
