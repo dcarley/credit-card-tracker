@@ -79,6 +79,7 @@
       "credit-card-tracker": {
         "command": "  mkdir -p $out/bin\n  cargo build --release\n  cp target/release/credit-card-tracker $out/bin/credit-card-tracker\n",
         "runtime-packages": [
+          "gcc",
           "libiconv"
         ],
         "version": "0.1.0",
@@ -1326,6 +1327,7 @@
         "credit-card-tracker": {
           "command": "  mkdir -p $out/bin\n  cargo build --release\n  cp target/release/credit-card-tracker $out/bin/credit-card-tracker\n",
           "runtime-packages": [
+            "gcc",
             "libiconv"
           ],
           "version": "0.1.0",

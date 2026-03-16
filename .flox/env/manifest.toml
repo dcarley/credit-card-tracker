@@ -18,4 +18,4 @@ command = '''
   cargo build --release
   cp target/release/credit-card-tracker $out/bin/credit-card-tracker
 '''
-runtime-packages = ["libiconv"]
+runtime-packages = ["gcc", "libiconv"]
