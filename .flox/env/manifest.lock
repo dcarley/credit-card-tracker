@@ -1,14 +1,16 @@
 {
   "lockfile-version": 1,
   "manifest": {
-    "version": 1,
+    "schema-version": "1.10.0",
     "install": {
       "cargo": {
         "pkg-path": "cargo",
-        "pkg-group": "rust-toolchain"
+        "pkg-group": "rust-toolchain",
+        "outputs": "all"
       },
       "cargo-nextest": {
-        "pkg-path": "cargo-nextest"
+        "pkg-path": "cargo-nextest",
+        "outputs": "all"
       },
       "cargo-semver-checks": {
         "pkg-path": "cargo-semver-checks",
@@ -16,51 +18,61 @@
           "aarch64-darwin",
           "aarch64-linux",
           "x86_64-linux"
-        ]
+        ],
+        "outputs": "all"
       },
       "cargo-watch": {
-        "pkg-path": "cargo-watch"
+        "pkg-path": "cargo-watch",
+        "outputs": "all"
       },
       "clang": {
         "pkg-path": "clang",
         "systems": [
           "aarch64-darwin",
           "x86_64-darwin"
-        ]
+        ],
+        "outputs": "all"
       },
       "clippy": {
         "pkg-path": "clippy",
-        "pkg-group": "rust-toolchain"
+        "pkg-group": "rust-toolchain",
+        "outputs": "all"
       },
       "gcc": {
         "pkg-path": "gcc",
         "systems": [
           "aarch64-linux",
           "x86_64-linux"
-        ]
+        ],
+        "outputs": "all"
       },
       "libiconv": {
         "pkg-path": "libiconv",
         "systems": [
           "aarch64-darwin",
           "x86_64-darwin"
-        ]
+        ],
+        "outputs": "all"
       },
       "rust-analyzer": {
         "pkg-path": "rust-analyzer",
-        "pkg-group": "rust-analyzer"
+        "pkg-group": "rust-analyzer",
+        "outputs": "all"
       },
       "rust-lib-src": {
         "pkg-path": "rustPlatform.rustLibSrc",
-        "pkg-group": "rust-toolchain"
+        "pkg-group": "rust-toolchain",
+        "outputs": "all"
       },
       "rustc": {
         "pkg-path": "rustc",
-        "pkg-group": "rust-toolchain"
+        "pkg-group": "rust-toolchain",
+        "outputs": "all"
       },
       "rustfmt": {
         "pkg-path": "rustfmt",
-        "pkg-group": "rust-toolchain"
+        "pkg-group": "rust-toolchain",
+        "outputs": "all"
       }
     },
     "hook": {
@@ -1318,7 +1330,7 @@
   ],
   "compose": {
     "composer": {
-      "version": 1,
+      "schema-version": "1.10.0",
       "hook": {
         "on-activate": "  export PATH=\"$PWD/result-credit-card-tracker/bin:$PATH\"\n"
       },
