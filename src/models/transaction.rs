@@ -173,7 +173,12 @@ impl ToSheetRows for [Transaction] {
 
                 Ok(headers
                     .iter()
-                    .map(|header| obj.get(header).cloned().unwrap_or(Value::Null))
+                    .map(|header| {
+                        obj.get(header)
+                            .cloned()
+                            .filter(|v| !v.is_null())
+                            .unwrap_or(Value::String(String::new()))
+                    })
                     .collect())
             })
             .collect::<crate::error::Result<_>>()?;
@@ -263,8 +268,8 @@ mod tests {
                 json!("GBP"),
                 json!("Debit"),
                 json!("tx_123"),
-                Value::Null, // Option::None serializes to null
-                Value::Null, // Option::None serializes to null
+                json!(""), // Matched ID is empty string
+                json!(""), // Comments is empty string
             ],
         ];
         assert_eq!(rows, expected);
