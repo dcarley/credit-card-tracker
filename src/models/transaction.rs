@@ -100,6 +100,7 @@ impl Transaction {
     fn value_to_string(v: &Value) -> String {
         match v {
             Value::String(s) => s.clone(),
+            Value::Null => String::new(),
             _ => v.to_string(),
         }
     }
@@ -124,25 +125,32 @@ pub trait ToSheetRows {
 
 impl FromSheetRows for Transaction {
     fn from_sheet_rows(rows: &[Vec<Value>]) -> crate::error::Result<Vec<Self>> {
-        if rows.is_empty() {
+        let Some((headers, data)) = rows.split_first() else {
             return Ok(Vec::new());
-        }
+        };
 
-        // Get headers from the first row
-        let headers: Vec<String> = rows[0].iter().map(Self::value_to_string).collect();
-
-        rows.iter()
+        let header_map: std::collections::HashMap<String, usize> = headers
+            .iter()
             .enumerate()
-            .skip(1)
+            .map(|(i, v)| (Self::value_to_string(v), i))
+            .collect();
+
+        let expected_fields = Self::get_field_names();
+
+        data.iter()
+            .enumerate()
             .map(|(idx, row)| {
-                let map: Map<String, Value> = headers
-                    .iter()
-                    .zip(row.iter())
-                    .map(|(header, value)| (header.clone(), Self::normalize_sheet_value(value)))
-                    .collect();
+                let map = Map::from_iter(expected_fields.iter().map(|field| {
+                    let value = header_map
+                        .get(field)
+                        .and_then(|&col_idx| row.get(col_idx))
+                        .map(Self::normalize_sheet_value)
+                        .unwrap_or(Value::Null);
+                    (field.clone(), value)
+                }));
 
                 serde_json::from_value(Value::Object(map)).map_err(|e| {
-                    AppError::Sheets(format!("Failed to parse row {}: {}", idx + 1, e))
+                    AppError::Sheets(format!("Failed to parse row {}: {}", idx + 2, e))
                 })
             })
             .collect()
@@ -280,6 +288,38 @@ mod tests {
     }
 
     #[test]
+    fn test_from_sheet_rows_ordering() {
+        let rows = vec![
+            vec![
+                json!("Timestamp"),
+                json!("Amount"),      // Swapped
+                json!("Description"), // Swapped
+                json!("Currency"),
+                json!("Type"),
+                json!("ID"),
+                json!("Comments"), // Matched ID is missing!
+            ],
+            vec![
+                json!("2024-11-23T10:00:00Z"),
+                json!("-12.34"),
+                json!("Description"),
+                json!("GBP"),
+                json!("Debit"),
+                json!("tx_123"),
+                json!("This is a comment"),
+            ],
+        ];
+
+        let transactions = Transaction::from_sheet_rows(&rows).unwrap();
+        let tx = &transactions[0];
+
+        assert_eq!(tx.description, "Description");
+        assert_eq!(tx.amount, dec!(-12.34));
+        assert_eq!(tx.matched_id, None); // Correctly missing
+        assert_eq!(tx.comments, Some("This is a comment".to_string())); // Correctly matched by header
+    }
+
+    #[test]
     fn test_from_sheet_rows_with_data() {
         let rows = vec![
             vec![
@@ -406,5 +446,23 @@ mod tests {
         assert_eq!(Transaction::index_to_column_letter(52), "BA");
         assert_eq!(Transaction::index_to_column_letter(701), "ZZ");
         assert_eq!(Transaction::index_to_column_letter(702), "AAA");
+    }
+
+    #[test]
+    fn test_get_field_names() {
+        let names = Transaction::get_field_names();
+        assert_eq!(
+            names,
+            vec![
+                "Timestamp",
+                "Description",
+                "Amount",
+                "Currency",
+                "Type",
+                "ID",
+                "Matched ID",
+                "Comments"
+            ]
+        );
     }
 }
