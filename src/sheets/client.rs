@@ -301,7 +301,7 @@ impl SheetOperations for SheetsClient {
         self.hub
             .spreadsheets()
             .values_update(value_range, &self.spreadsheet_id, &data_range)
-            .value_input_option("RAW")
+            .value_input_option("USER_ENTERED")
             .add_scope(AUTH_SCOPE)
             .doit()
             .await
