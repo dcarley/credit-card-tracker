@@ -18,7 +18,7 @@ jobs:
       uses: flox/install-flox-action@v2.1.0
 
     - name: Configure environment trust
-      run: flox config --set trusted_environments.flox/rust trust
+      run: flox config --set trusted_environments.dcarley/rust trust
 
     - name: Cache Cargo registry and build artifacts
       uses: actions/cache@v4
