@@ -102,8 +102,6 @@ where
         }
 
         let mut all_transactions: Vec<Transaction> = transaction_map.into_values().collect();
-        all_transactions
-            .sort_by(|a, b| a.timestamp.cmp(&b.timestamp).then_with(|| a.id.cmp(&b.id)));
 
         let matches = reconcile_transactions(&all_transactions, self.config.reconcile_days);
         for pair in &matches {
@@ -119,6 +117,10 @@ where
                 .expect("credit_id from reconcile must exist in all_transactions")
                 .matched_id = Some(pair.debit_id.clone());
         }
+
+        // Sheet display order: newest first, with ID as a deterministic tie-break
+        all_transactions
+            .sort_by(|a, b| b.timestamp.cmp(&a.timestamp).then_with(|| a.id.cmp(&b.id)));
 
         self.sheets_client
             .write_sheet(&sheet, sheet_name, &all_transactions)
@@ -306,7 +308,7 @@ mod tests {
 
         assert_eq!(
             *final_transactions,
-            vec![tx_sheet_matched, tx_truelayer_matched],
+            vec![tx_truelayer_matched, tx_sheet_matched],
             "historical transactions outside sync window should be preserved and matched with new transactions"
         );
     }
@@ -344,8 +346,44 @@ mod tests {
         let final_transactions = mock_sheets_client.replaced_transactions.lock().unwrap();
         assert_eq!(
             *final_transactions,
-            vec![tx_sheet_with_metadata, tx_truelayer],
+            vec![tx_truelayer, tx_sheet_with_metadata],
             "existing matched_id and comments should be preserved during sync"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_sync_writes_newest_first() {
+        let base_datetime = mock_datetime(2025, 1, 1);
+
+        let tx_old = mock_transaction(
+            "txn-old",
+            dec!(0),
+            TransactionType::Debit,
+            base_datetime - Duration::days(2),
+        );
+        let tx_mid = mock_transaction(
+            "txn-mid",
+            dec!(0),
+            TransactionType::Debit,
+            base_datetime - Duration::days(1),
+        );
+        let tx_new = mock_transaction("txn-new", dec!(0), TransactionType::Debit, base_datetime);
+
+        // Provide them oldest-first to ensure the sort reverses them
+        let truelayer_transactions = vec![tx_old.clone(), tx_mid.clone(), tx_new.clone()];
+        let sheet_transactions = vec![];
+
+        let mock_sheets_client =
+            mocks::sync_against_mocks(sheet_transactions, truelayer_transactions)
+                .await
+                .unwrap();
+
+        let final_transactions = mock_sheets_client.replaced_transactions.lock().unwrap();
+
+        assert_eq!(
+            *final_transactions,
+            vec![tx_new, tx_mid, tx_old],
+            "newest transaction should be written first"
         );
     }
 
